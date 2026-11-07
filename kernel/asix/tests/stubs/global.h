@@ -26,8 +26,18 @@ typedef struct {unsigned pos;} FIL;
 typedef int FRESULT;
 #define FR_OK 0
 #define FA_READ 1
+#define FA_WRITE 2
+#define FA_CREATE_ALWAYS 8
 #define FA_OPEN_EXISTING 0
 int f_open_main_drive(FIL *f,const char *path,int mode);
 int f_read(FIL *f,void *data,unsigned max,unsigned *size);
 int f_close(FIL *f);
+int f_write(FIL *f,const void *data,unsigned n,unsigned *written);
+void heap_free(int heap,void *p);
+void udelay(int us);
+void sync_after_write(void *p,int n);
+void sync_before_read(void *p,int n);
+s32 IOS_Ioctl(s32 fd,s32 request,void *in,s32 inlen,void *out,s32 outlen);
+s32 IOS_IoctlvAsync(s32 fd,s32 request,s32 in,s32 out,void *vec,int queue,void *message);
+#define _sprintf sprintf
 #endif

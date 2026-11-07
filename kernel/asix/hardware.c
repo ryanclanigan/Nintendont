@@ -17,7 +17,9 @@
 static s32 device=-1, ven=-1, queue=-1;
 static int device_present;
 static usb_device_entry attached[32] ALIGNED(32);
-static s32 attached_count,attach_result;
+static s32 attached_count,attach_result,resume_result;
+static s32 last_control_result;
+static u32 control_count,last_control_type,last_control_request,last_control_value;
 static u32 queue_store[2];
 static u8 control_data[256] ALIGNED(32);
 static u8 rx_data[RX_CAPACITY] ALIGNED(32);
@@ -34,12 +36,14 @@ static u16 le16(const u8 *p) { return p[0] | ((u16)p[1]<<8); }
 static u32 le32(const u8 *p) { return p[0] | ((u32)p[1]<<8) | ((u32)p[2]<<16) | ((u32)p[3]<<24); }
 static int read_control(s32 fd,u8 type,u8 req,u16 val,u16 idx,u16 n,const char *label) {
     s32 rc=USB_ReadCtrlMsg(fd,type,req,val,idx,n,control_data);
+    control_count++;last_control_result=rc;last_control_type=type;last_control_request=req;last_control_value=val;
     if(rc!=n+8) { report("ASIX %s: %d\n",label,rc); return -1; }
     return 0;
 }
 static int write_control(s32 fd,u8 req,u16 val,u16 idx,const u8 *data,u16 n,const char *label) {
     if(n) memcpy(control_data,data,n);
     s32 rc=USB_WriteCtrlMsg(fd,0x40,req,val,idx,n,n?control_data:NULL);
+    control_count++;last_control_result=rc;last_control_type=0x40;last_control_request=req;last_control_value=val;
     if(rc!=n+8) { report("ASIX %s: %d\n",label,rc); return -1; }
     return 0;
 }
@@ -211,8 +215,12 @@ s32 asix_hw_init(struct netif *n) {
     attach_result=IOS_Ioctl(ven,USBV5_IOCTL_ATTACHFINISH,NULL,0,NULL,0);
     if(!device_present)return -3;
     memset(args,0,sizeof(args));args[0]=device;args[2]=1;
-    if(IOS_Ioctl(ven,USBV5_IOCTL_SUSPEND_RESUME,args,sizeof(args),NULL,0)<0)return -4;
-    if(read_control(device,0x80,6,0x100,0,18,"device descriptor") || le16(control_data+12)!=0x0300)return -5;
+    /* Like libogc USB_OpenDevice, do not reject an already-active device
+     * solely on the resume status. Descriptor I/O below is mandatory. */
+    resume_result=IOS_Ioctl(ven,USBV5_IOCTL_SUSPEND_RESUME,args,sizeof(args),NULL,0);
+    if(read_control(device,0x80,6,0x100,0,18,"device descriptor") ||
+       le16(control_data+8)!=0x0b95 || le16(control_data+10)!=0x1790 ||
+       le16(control_data+12)!=0x0300)return -5;
     /* Validate the endpoint layout instead of applying this register sequence
      * to other chips that share the same VID/PID. */
     if(read_control(device,0x80,6,0x200,0,9,"configuration"))return -6;
@@ -228,7 +236,13 @@ s32 asix_hw_init(struct netif *n) {
         off+=len;
     }
     if(found!=3)return -6;
-    if(USB_WriteCtrlMsg(device,0,9,config,0,0,NULL)!=8)return -7;
+    if(read_control(device,0x80,8,0,0,1,"current configuration"))return -7;
+    if(control_data[0]!=config) {
+        last_control_result=USB_WriteCtrlMsg(device,0,9,config,0,0,NULL);
+        control_count++;last_control_type=0;last_control_request=9;last_control_value=config;
+        if(last_control_result!=8)return -7;
+        if(read_control(device,0x80,8,0,0,1,"verify configuration") || control_data[0]!=config)return -7;
+    }
     if(read_control(device,0xc0,1,0x10,6,6,"MAC"))return -8;
     memcpy(n->hwaddr,control_data,6);n->hwaddr_len=6;
     unsigned any=0;for(unsigned i=0;i<6;i++)any|=n->hwaddr[i];
@@ -257,7 +271,7 @@ static void boot_file(const char *name,const void *data,unsigned length) {
 void asix_hw_boot_log(struct netif *n) {
     static char text[4096];
     int length=_sprintf(text,
-        "Slippi ASIX 0.4 Starlet preflight\r\n"
+        "Slippi ASIX 0.5 Starlet preflight\r\n"
         "ip=%08x mask=%08x gateway=%08x\r\n"
         "MAC=%02x:%02x:%02x:%02x:%02x:%02x\r\n"
         "device=%08x ven=%d queue=%d failed=%d\r\n"
@@ -274,11 +288,12 @@ void asix_hw_boot_log(struct netif *n) {
         diag.tx_submit,diag.tx_submit_rc,diag.tx_done,diag.last_tx,tx_pending,tx_count,diag.frames,diag.bad_groups,diag.input_errors,
         first_rx_n,first_tx_n);
     length+=_sprintf(text+length,"enumerated=%d matched=%d attach_result=%d\r\n",attached_count,device_present,attach_result);
+    length+=_sprintf(text+length,"resume_result=%d control_count=%u last_control_result=%d type=%02x request=%02x value=%04x\r\n",resume_result,control_count,last_control_result,last_control_type,last_control_request,last_control_value);
     for(s32 i=0;i<attached_count && i<32;i++)
         length+=_sprintf(text+length,"USB %d: id=%08x VID:PID=%04x:%04x\r\n",i,attached[i].device_id,attached[i].vid,attached[i].pid);
     boot_file("/slippi_asix_boot.log",text,length);
-    if(first_rx)boot_file("/slippi_asix_rx.bin",first_rx,first_rx_n);
-    if(first_tx)boot_file("/slippi_asix_tx.bin",first_tx,first_tx_n);
+    boot_file("/slippi_asix_rx.bin",first_rx?first_rx:control_data,first_rx_n);
+    boot_file("/slippi_asix_tx.bin",first_tx?first_tx:control_data,first_tx_n);
     if(first_rx){heap_free(0,first_rx);first_rx=NULL;}
     if(first_tx){heap_free(0,first_tx);first_tx=NULL;}
 }

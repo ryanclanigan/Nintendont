@@ -61,8 +61,8 @@ USB enumeration consumes the initial VEN snapshot before the existing storage
 hotplug watcher starts, without registering a competing watcher.
 
 Network initialization error codes: -101 config, -102 mutex, -103 netif,
--104 heap; -1/-2 USB service/enumeration, -3 missing adapter, -4 resume,
--5 revision, -6 endpoints, -7 USB configuration, -8 MAC, -9 link/register
+-104 heap; -1/-2 USB service/enumeration, -3 missing adapter,
+-5 descriptor/identity, -6 endpoints, -7 USB configuration, -8 MAC, -9 link/register
 initialization, -10 completion queue. Check the config and cable first if boot
 stops at network initialization. USB transfer errors stop the custom transport.
 
@@ -110,3 +110,21 @@ regression test covers both positive and negative matching IDs, nonmatching
 VID/PID, empty lists and invalid counts using the production selection helper.
 USB initialization failures now also write the boot log with enumeration
 entries, selected ID and attach result, even when preflight cannot begin.
+
+## Resume validation fix 0.5
+
+The physical 0.4 log confirmed VID/PID 0b95:1790 and signed ID df1f0021;
+startup then stopped at the resume request. Like libogc USB_OpenDevice, the
+driver now records resume status and proceeds to a mandatory descriptor read.
+Negative resume status alone is not treated as proof the device is unusable.
+VID, PID and revision must all match before initialization continues. Existing
+USB configuration is read first, changed only if necessary, and verified after
+a change. Boot diagnostics include resume result and the last control transfer.
+Early-failure runs also replace stale packet captures with empty files.
+
+The hardware host test compiles the production hardware.c with simulated IOS.
+It covers a negative VEN ID with a failing resume followed by valid descriptors,
+a failed descriptor transfer that must stop initialization, configuration
+selection/verification, and writing initialization results to the boot log.
+Both hardware and socket tests run from the provided test scripts. Physical
+USB communication and mirroring still require the Wii run.

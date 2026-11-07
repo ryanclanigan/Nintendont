@@ -13,14 +13,17 @@ if ([System.IO.Path]::GetFileNameWithoutExtension($Compiler) -eq 'tcc') {
     $argsList += '-idirafter'
     $argsList += $kernelRoot
 }
-$sources = @((Join-Path $PSScriptRoot 'socket_test.c'))
+$sources = @()
 $sources += Get-ChildItem (Join-Path $kernelRoot 'asix/lwip/src/core/*.c'), (Join-Path $kernelRoot 'asix/lwip/src/core/ipv4/*.c') | ForEach-Object FullName
 $sources += Join-Path $kernelRoot 'asix/lwip/src/netif/ethernet.c'
 try {
-    & $Compiler @argsList '-o' $testOutput @sources
-    if ($LASTEXITCODE -ne 0) { throw 'Socket test compilation failed.' }
-    & $testOutput
-    if ($LASTEXITCODE -ne 0) { throw 'Socket test failed.' }
+    foreach ($testName in @('socket_test.c', 'hardware_test.c')) {
+        $testSources = @((Join-Path $PSScriptRoot $testName)) + $sources
+        & $Compiler @argsList '-o' $testOutput @testSources
+        if ($LASTEXITCODE -ne 0) { throw "Compilation failed: $testName" }
+        & $testOutput
+        if ($LASTEXITCODE -ne 0) { throw "Test failed: $testName" }
+    }
 } finally {
     if (Test-Path -LiteralPath $testOutput) { Remove-Item -LiteralPath $testOutput }
 }
