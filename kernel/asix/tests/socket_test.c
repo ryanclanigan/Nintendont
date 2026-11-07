@@ -74,6 +74,7 @@ static void serve_dhcp(const u8 *ip,const u8 *udp,unsigned length) {
         assert(i<length);unsigned size=msg[i++];assert(size<=length-i);
         if(key==53 && size==1)type=msg[i];i+=size;
     }
+    if(type==1 || type==3)assert(b16(msg+10)==(b32(msg+12)?0:0x8000));
     if(type==1) {
         discovers++;if(!dhcp_serving)return;
         if(drop_discovers){drop_discovers--;return;}

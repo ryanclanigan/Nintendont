@@ -189,6 +189,14 @@ int main(void){
     asix_hw_boot_log(&n);
     asix_lwip_heap=calloc(1,MEM_SIZE+4096);assert(asix_lwip_heap);lwip_init();
     family_tests(&n);packet_tests(&n);
+    probed=0;assert(asix_hw_init(&n)==0);
+    memset(rx_data,0x5a,80);capture_rx(80);capture_rx(16);
+    assert(rx_trace_n==104 && rx_trace_groups==2 && le32(rx_trace)==80 && le32(rx_trace+84)==16);
+    for(unsigned i=4;i<84;i++)assert(rx_trace[i]==0x5a);
+    unsigned saved=rx_trace_n;rx_trace_n=RX_TRACE_CAPACITY-2;capture_rx(16);
+    assert(rx_trace_n==RX_TRACE_CAPACITY-2 && rx_trace_dropped==1);rx_trace_n=saved;
+    asix_hw_boot_log(&n);assert(!rx_trace && strstr(saved_log,"rx_trace_bytes=104 groups=2 dropped=1"));
+    puts("PASS RX trace: multiple groups, little-endian lengths, capacity bound and boot-log persistence");
     puts("PASS USB 2.0 families: AX88172/A, AX88772/A/B/C/D/E, AX88178/A; packet splits, malformed RX, TX boundaries, endpoint selection, USB 3 exclusion, MII/link/control failures");
     puts("PASS hardware: absent/unsupported/supported probes, cached enumeration, storage snapshot, negative ID, resume error with valid descriptor, rejected descriptor failure, configuration verification, boot logs");
     return 0;

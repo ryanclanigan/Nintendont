@@ -15,6 +15,14 @@
 #define LWIP_UDPLITE 0
 #define LWIP_DHCP 1
 #define LWIP_DHCP_MAX_DNS_SERVERS 1
+/* Ask for broadcast offers/ACKs until configured. Some DHCP servers cannot
+ * unicast to a client that has not yet acquired its offered address. Renewal
+ * retains unicast semantics once the interface has an address. */
+#define LWIP_HOOK_DHCP_APPEND_OPTIONS(netif, dhcp, state, msg, type, length) do { \
+    if (((type) == DHCP_DISCOVER || (type) == DHCP_REQUEST) && \
+        ip4_addr_isany_val(*netif_ip4_addr(netif))) \
+        (msg)->flags = PP_HTONS(0x8000); \
+} while (0)
 #define LWIP_AUTOIP 0
 #define LWIP_DNS 1
 #define DNS_TABLE_SIZE 2

@@ -83,6 +83,10 @@ additional IOS installation is needed for this feature.
    Mirroring uses TCP **51441**, with discovery broadcasts on UDP **20582**;
    the laptop and Wii must be on the same subnet for discovery.
 
+Startup DHCP requests ask the server to broadcast its offer/ACK until the Wii
+has an address, for servers that cannot unicast to an unconfigured client.
+Lease renewals retain normal unicast behavior.
+
 DHCP waits up to 30 seconds after the link is ready, including retries and
 address-conflict checks. A timeout reports **No router IP** on the TV and writes
 diagnostics; it does not guess a static address. Link failure, unsupported
@@ -104,7 +108,11 @@ The custom stack uses DHCP or this file rather than the Wii System Menu profile;
 the native IOS path keeps its existing network settings.
 
 Startup writes **slippi_asix_boot.log**, **slippi_asix_rx.bin** and
-**slippi_asix_tx.bin** to the game device root. The log records the assigned IP,
+**slippi_asix_tx.bin** to the game device root. A bounded
+**slippi_asix_rx_trace.bin** additionally records up to 32 KiB of incoming raw
+USB groups, each prefixed with its little-endian u32 length. This preserves
+replies arriving after the first packet; trace overflow is counted in the log.
+The log records the assigned IP,
 DHCP state, DNS, family, revision, endpoints and I/O results. Captures may be
 empty when initialization fails before traffic. DHCP and the additional adapter
 families still need physical Wii validation in this build.

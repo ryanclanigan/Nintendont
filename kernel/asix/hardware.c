@@ -17,6 +17,7 @@
 #define report dbgprintf
 #define RX_CAPACITY 8192
 #define TX_SLOTS 8
+#define RX_TRACE_CAPACITY 32768
 static s32 device=-1, ven=-1, queue=-1;
 static int device_present,probed;
 static s32 cached_probe_result;
@@ -34,6 +35,8 @@ static int rx_pending, tx_pending, failed;
 static struct {u32 polls,rx_submit,rx_done,rx_bytes,tx_submit,tx_done,frames,bad_groups,input_errors,unknown; s32 rx_submit_rc,tx_submit_rc,last_rx,last_tx,queue_rc;} diag;
 static u8 *first_rx,*first_tx;
 static unsigned first_rx_n,first_tx_n;
+static u8 *rx_trace;
+static unsigned rx_trace_n,rx_trace_groups,rx_trace_dropped;
 static struct _usb_msg rx_req ALIGNED(32), tx_req ALIGNED(32);
 static struct ipcmessage rx_msg ALIGNED(32), tx_msg ALIGNED(32);
 static u16 le16(const u8 *p) { return p[0] | ((u16)p[1]<<8); }
@@ -128,6 +131,16 @@ static int initialize_adapter(s32 fd, u16 *speed, int *full_duplex) {
     return 0;
 }
 
+/* Length-prefixed raw USB groups retain traffic beyond the first ARP packet.
+ * Prefixes are little-endian u32 lengths; no disk writes occur while polling. */
+static void capture_rx(unsigned size) {
+    if(first_rx && !first_rx_n){first_rx_n=size;memcpy(first_rx,rx_data,size);}
+    if(!rx_trace)return;
+    if(size>RX_TRACE_CAPACITY || rx_trace_n>RX_TRACE_CAPACITY-size ||
+       RX_TRACE_CAPACITY-rx_trace_n-size<4){rx_trace_dropped++;return;}
+    for(unsigned i=0;i<4;i++)rx_trace[rx_trace_n+i]=size>>(8*i);
+    memcpy(rx_trace+rx_trace_n+4,rx_data,size);rx_trace_n+=size+4;rx_trace_groups++;
+}
 static s32 submit(struct _usb_msg *r, struct ipcmessage *m,u8 ep,u8 *buf,u16 n) {
     memset(r,0,sizeof(*r)); memset(m,0,sizeof(*m));
     r->fd=device;r->bulk.rpData=buf;r->bulk.wLength=n;r->bulk.bEndpoint=ep;
@@ -232,7 +245,7 @@ void asix_hw_poll(struct netif *n) {
             rx_pending=0;diag.rx_done++;diag.last_rx=result;
             if(result<0 || result>RX_CAPACITY)failed=1;
             else if(result) {sync_before_read(rx_data,result);diag.rx_bytes+=result;
-                if(first_rx && !first_rx_n){first_rx_n=result;memcpy(first_rx,rx_data,result);}
+                capture_rx(result);
                 receive(n,result);
             }
         } else if(m==&tx_msg) {
@@ -384,6 +397,8 @@ s32 asix_hw_init(struct netif *n) {
     queue=mqueue_create(queue_store,2);if(queue<0)return -10;
     first_rx=heap_alloc_aligned(0,RX_CAPACITY,32);
     first_tx=heap_alloc_aligned(0,1568,32);
+    rx_trace=heap_alloc_aligned(0,RX_TRACE_CAPACITY,32);
+    rx_trace_n=rx_trace_groups=rx_trace_dropped=0;
     return 0;
 }
 void asix_hw_shutdown(void) {
@@ -403,7 +418,7 @@ static void boot_file(const char *name,const void *data,unsigned length) {
 void asix_hw_boot_log(struct netif *n) {
     static char text[4096];
     int length=_sprintf(text,
-        "Slippi ASIX 0.8 DHCP preflight\r\n"
+        "Slippi ASIX 0.9 DHCP broadcast preflight\r\n"
         "ip=%08x mask=%08x gateway=%08x\r\n"
         "MAC=%02x:%02x:%02x:%02x:%02x:%02x\r\n"
         "device=%08x ven=%d queue=%d failed=%d\r\n"
@@ -419,6 +434,7 @@ void asix_hw_boot_log(struct netif *n) {
         diag.polls,diag.queue_rc,diag.unknown,diag.rx_submit,diag.rx_submit_rc,diag.rx_done,diag.last_rx,diag.rx_bytes,rx_pending,
         diag.tx_submit,diag.tx_submit_rc,diag.tx_done,diag.last_tx,tx_pending,tx_count,diag.frames,diag.bad_groups,diag.input_errors,
         first_rx_n,first_tx_n);
+    length+=_sprintf(text+length,"rx_trace_bytes=%u groups=%u dropped=%u\r\n",rx_trace_n,rx_trace_groups,rx_trace_dropped);
     const ip4_addr_t *address=netif_ip4_addr(n);
     length+=_sprintf(text+length,"address=%u.%u.%u.%u\r\n",ip4_addr1(address),ip4_addr2(address),ip4_addr3(address),ip4_addr4(address));
     struct dhcp *lease=netif_dhcp_data(n);
@@ -431,6 +447,8 @@ void asix_hw_boot_log(struct netif *n) {
     boot_file("/slippi_asix_boot.log",text,length);
     boot_file("/slippi_asix_rx.bin",first_rx?first_rx:control_data,first_rx_n);
     boot_file("/slippi_asix_tx.bin",first_tx?first_tx:control_data,first_tx_n);
+    boot_file("/slippi_asix_rx_trace.bin",rx_trace?rx_trace:control_data,rx_trace_n);
+    if(rx_trace){heap_free(0,rx_trace);rx_trace=NULL;}
     if(first_rx){heap_free(0,first_rx);first_rx=NULL;}
     if(first_tx){heap_free(0,first_tx);first_tx=NULL;}
 }
