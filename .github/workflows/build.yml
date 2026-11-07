@@ -52,6 +52,7 @@ jobs:
           mkdir artifact
           cp ./loader/loader.* ./artifact/
           mkdir -p "release-artifact/apps/Slippi Nintendont"
+          cp ./kernel/asix/slippi_asix.ini.example ./release-artifact/slippi_asix.ini.example
           cp ./loader/loader.dol "./release-artifact/apps/Slippi Nintendont/boot.dol"
           cp ./nintendont/{icon.png,meta.xml} "./release-artifact/apps/Slippi Nintendont/"
           pushd "./release-artifact/apps/Slippi Nintendont/"

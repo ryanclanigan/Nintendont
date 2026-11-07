@@ -20,10 +20,11 @@ jobs:
           branch: slippi
       - name: Zip Release Artifact
         run: |
+          cp release*/slippi_asix.ini.example ./
           mv release*/apps ./
           mv loader*/* ./
-          zip -r "Slippi-Nintendont-${{ env.VERSION }}.zip" apps/
-          rm -rf release* loader* apps/
+          zip -r "Slippi-Nintendont-${{ env.VERSION }}.zip" apps/ slippi_asix.ini.example
+          rm -rf release* loader* apps/ slippi_asix.ini.example
       - name: Upload binaries to release
         uses: svenstaro/upload-release-action@v2
         with:

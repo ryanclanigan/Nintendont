@@ -58,7 +58,10 @@ Nintendont has two main components:
   between some Gamecube game and IOS/hardware components
 
 ### Wii Networking
-Network initialization should succeed assuming that the user has a valid network
+For the optional ASIX backend, follow the [ASIX installation instructions](README.md#optional-asix-ethernet).
+Its static IP configuration is stored in slippi_asix.ini on the game device.
+
+For the default IOS backend, network initialization should succeed assuming that the user has a valid network
 connection profile, and that IOS is able to actually establish connectivity.
 
 Note that Melee will crash/freeze on boot if network initialization is not delayed
