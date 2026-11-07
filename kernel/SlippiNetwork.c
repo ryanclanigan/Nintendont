@@ -13,6 +13,7 @@
 #include "debug.h"
 #include "net.h"
 #include "Config.h"
+#include "asix/asix.h"
 
 
 /* The game can transfer at most 784 bytes / frame.
@@ -134,7 +135,7 @@ s32 getClientMessage(s32 socket, u32 waitTimeMs)
 			continue;
 		}
 
-		u32 readLen = 0;
+		s32 readLen = 0;
 
 		// First we need to read the total message size
 		if (msgSize == 0) {
@@ -156,6 +157,7 @@ s32 getClientMessage(s32 socket, u32 waitTimeMs)
 		readLen = recvfrom(top_fd, socket, &clientMsg[pos], msgSize - pos, 0);
 		dbgprintf("[Recv] Res: %d\r\n", readLen);
 
+		if (readLen <= 0) return -2;
 		pos += readLen;
 
 		if (pos >= msgSize) {
@@ -534,6 +536,7 @@ static u32 SlippiNetworkHandlerThread(void *arg)
 {
 	while (1)
 	{
+		if (ConfigGetConfig(NIN_CFG_ASIX_ETHERNET)) ASIXUpdate();
 		int status = getConnectionStatus();
 		switch (status)
 		{

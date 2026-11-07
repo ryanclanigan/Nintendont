@@ -566,7 +566,9 @@ bool __has_device_after_change()
 	for (i = 0; i < num_attached_devices; i++)
 	{
 		// known device USB LAN
-		if (AttachedDevices[i].vid == 0x0b95 && AttachedDevices[i].pid == 0x7720)
+		if (AttachedDevices[i].vid == 0x0b95 &&
+			(AttachedDevices[i].pid == 0x7720 ||
+			 (AttachedDevices[i].pid == 0x1790 && ConfigGetConfig(NIN_CFG_ASIX_ETHERNET))))
 			continue;
 
 		// see libogc/usb.c: USBV5_SuspendResume

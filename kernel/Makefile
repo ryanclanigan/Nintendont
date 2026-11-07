@@ -43,6 +43,14 @@ OBJECTS	:= start.o common.o alloc.o GCAM.o JVSIO.o JVSIOMessage.o FST.o DI.o Rea
 	   PatchWidescreen.o ISO.o Stream.o adp.o EXI.o SRAM.o GCNCard.o SI.o HID.o diskio.o \
 	   Config.o utils_asm.o ES.o NAND.o main.o syscalls.o ReadSpeed.o vsprintf.o string.o \
 	   prs.o SDI.o usb.o usbstorage.o wdvd.o net.o
+ASIX_CORE := $(wildcard asix/lwip/src/core/*.c) $(wildcard asix/lwip/src/core/ipv4/*.c) asix/lwip/src/netif/ethernet.c
+OBJECTS += asix/asix.o asix/hardware.o $(ASIX_CORE:.c=.o)
+ASIX_CPPFLAGS := -Iasix/port -Iasix/lwip/src/include
+
+asix/%.o: asix/%.c
+	@echo "CC    $<"
+	@$(CC) $(CFLAGS) -std=gnu11 $(ASIX_CPPFLAGS) $(CPPFLAGS) -c -MMD -MP -MF $(@:.o=.d) -o $@ $<
+
 LIBS	:= ../fatfs/libfatfs-arm.a be/libc.a be/libgcc.a
 ZIPFILE	:= ../loader/data/kernel.zip
 
@@ -118,4 +126,4 @@ $(TARGET): $(GECKO_H) $(COMMON_CFG) kernel.ld $(OBJECTS)
 
 clean:
 	-$(RM) -f $(ZIPFILE) *.elf *.o *.bin *.d *.map lwbt/*.d lwbt/*.o option/*.d option/*.o gecko/*.h \
-		../common/config/*.o ../common/config/*.d ubj/*.o ubj/*.d
+		../common/config/*.o ../common/config/*.d ubj/*.o ubj/*.d $(ASIX_CORE:.c=.o) $(ASIX_CORE:.c=.d) asix/*.o asix/*.d

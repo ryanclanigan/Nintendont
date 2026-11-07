@@ -42,6 +42,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "SlippiNetwork.h"
 #include "SlippiNetworkBroadcast.h"
 #include "net.h"
+#include "asix/asix.h"
 
 #include "../common/include/KernelBoot.h"
 
@@ -315,7 +316,13 @@ int _main( int argc, char *argv[] )
 	if (UseNetwork == 1)
 	{
 		BootStatus(NETWORK_INIT, s_size, s_cnt);
-		NCDInit();
+		ret = NCDInit();
+		if (ret < 0) {
+			dbgprintf("Network initialization failed: %d\n", ret);
+			BootStatusError(-NETWORK_INIT, ret);
+			mdelay(4000);
+			Shutdown();
+		}
 		NetworkStarted = 1;
 		SlippiNetworkInit();
 #ifdef SLIPPI_DEBUG
@@ -673,6 +680,10 @@ int _main( int argc, char *argv[] )
 		EXIShutdown();
 
 	SlippiNetworkShutdown();
+	if (NetworkStarted && ConfigGetConfig(NIN_CFG_ASIX_ETHERNET)) {
+		SlippiNetworkBroadcastShutdown();
+		ASIXShutdown();
+	}
 	SlippiFileWriterShutdown();
 
 	if (ConfigGetConfig(NIN_CFG_LOG))

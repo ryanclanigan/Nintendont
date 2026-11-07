@@ -19,3 +19,4 @@ kernel/bin2h/bin2h
 loader/*.lnk
 loader/wiiload.exe
 release-artifact/*
+loader/build-asix/
