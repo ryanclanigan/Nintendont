@@ -612,6 +612,8 @@ int main(int argc, char **argv)
 	void *kernel_bin = NULL;
 	unsigned int kernel_bin_size = 0;
 	unzip_data(kernel_zip, kernel_zip_size, &kernel_bin, &kernel_bin_size);
+	if (!kernel_bin || !kernel_bin_size || kernel_bin_size > 0xE0000)
+		ShowMessageScreenAndExit("Failed to unpack embedded Nintendont kernel!", 1);
 	gprintf("Decompressed kernel.bin with %i bytes\r\n", kernel_bin_size);
 	memcpy((void*)0x92F00000,kernel_bin,kernel_bin_size);
 	DCFlushRange((void*)0x92F00000,kernel_bin_size);

@@ -134,6 +134,10 @@ DEPENDS	:=	$(OFILES:.o=.d)
 $(OUTPUT).dol: $(OUTPUT).elf
 $(OUTPUT).elf: $(OFILES)
 
+# bin2s also generates headers with compile-time blob lengths. Regenerate
+# those headers before compiling C, including parallel/incremental builds.
+$(filter-out %.bin.o %.zip.o %.png.o,$(OFILES)): $(filter %.bin.o %.zip.o %.png.o,$(OFILES))
+
 #---------------------------------------------------------------------------------
 # This rule links in binary data with the .jpg extension
 #---------------------------------------------------------------------------------

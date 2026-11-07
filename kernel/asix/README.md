@@ -89,3 +89,14 @@ normal game threads begin, rather than adding concurrent FatFS calls.
 
 This is instrumentation for the reported integrated ping/discovery failure.
 It does not establish or claim a fix for that failure.
+
+## Loader packaging fix 0.3
+
+Build 0.2 contained a 197981-byte kernel ZIP but main.o passed the old
+197143-byte length to unzip_data. Binary data generation also updates headers
+with compile-time sizes, and parallel make did not order C compilation after
+those header updates. The loader now explicitly waits for embedded binary
+objects, and archive extraction checks every open/info/read/CRC/allocation result.
+A regression check confirms an updated ZIP rebuilds main.o in a parallel build.
+The corrected loader passes the full 197981-byte length. Network preflight and
+diagnostic filenames remain the same as 0.2; physical boot still needs retesting.

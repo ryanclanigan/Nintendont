@@ -154,17 +154,39 @@ void RAMInit(void)
 void unzip_data(const void *input, const unsigned int input_size, 
 	void **output, unsigned int *output_size)
 {
-	char filepath[20]; //statically linked zip file
-	snprintf(filepath,20,"%x+%x",(unsigned int)input,input_size);
-	unzFile uf = unzOpen(filepath); //opens zip in memory
-	unzOpenCurrentFile(uf); //current file is the only file
-	unz_file_info file_info; //get file info for uncompressed size
-	unzGetCurrentFileInfo(uf,&file_info,NULL,0,NULL,0,NULL,0);
-	*output_size = file_info.uncompressed_size; //set output size
-	*output = malloc(*output_size); //allocate the required size
-	unzReadCurrentFile(uf,*output,*output_size); //read it all
-	unzCloseCurrentFile(uf); //done reading out the only file
-	unzClose(uf); //close our static archive, all done!
+	char filepath[32];
+	unzFile uf;
+	unz_file_info info;
+	void *buffer;
+	int received, close_result;
+	*output = NULL;
+	*output_size = 0;
+	if (!input || input_size < 22) return;
+	snprintf(filepath, sizeof(filepath), "%x+%x", (unsigned int)input, input_size);
+	uf = unzOpen(filepath);
+	if (!uf) return;
+	memset(&info, 0, sizeof(info));
+	if (unzGetCurrentFileInfo(uf, &info, NULL, 0, NULL, 0, NULL, 0) != UNZ_OK ||
+	    !info.uncompressed_size || info.uncompressed_size > 16 * 1024 * 1024 ||
+	    unzOpenCurrentFile(uf) != UNZ_OK) {
+		unzClose(uf);
+		return;
+	}
+	buffer = malloc(info.uncompressed_size);
+	if (!buffer) {
+		unzCloseCurrentFile(uf);
+		unzClose(uf);
+		return;
+	}
+	received = unzReadCurrentFile(uf, buffer, info.uncompressed_size);
+	close_result = unzCloseCurrentFile(uf);
+	unzClose(uf);
+	if (received != (int)info.uncompressed_size || close_result != UNZ_OK) {
+		free(buffer);
+		return;
+	}
+	*output = buffer;
+	*output_size = info.uncompressed_size;
 }
 
 static void *font_ttf = NULL;
@@ -185,6 +207,10 @@ void Initialise(bool autoboot)
 	CheckForGecko();
 	gprintf("GRRLIB_Init = %i\r\n", GRRLIB_Init());
 	unzip_data(font_zip, font_zip_size, &font_ttf, &font_ttf_size);
+	if (!font_ttf || !font_ttf_size) {
+		gprintf("Failed to unpack embedded font archive.\n");
+		exit(1);
+	}
 	gprintf("Decompressed font.ttf with %i bytes\r\n", font_ttf_size);
 	myFont = GRRLIB_LoadTTF(font_ttf, font_ttf_size);
 	background = GRRLIB_LoadTexturePNG(background_png);
