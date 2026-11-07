@@ -24,7 +24,7 @@ try {
         & $testOutput
         if ($LASTEXITCODE -ne 0) { throw "Test failed: $testName" }
         if ($testName -eq 'socket_test.c') {
-            foreach ($mode in @('dhcp', 'conflict', 'timeout')) {
+            foreach ($mode in @('dhcp', 'conflict', 'timeout', 'fallback', 'fallback-dhcp', 'fallback-usbfail')) {
                 & $testOutput $mode
                 if ($LASTEXITCODE -ne 0) { throw "Test failed: $testName $mode" }
             }

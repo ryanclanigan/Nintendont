@@ -8,6 +8,8 @@ void test_ack(struct ipcmessage *m,int result);
 #include "../hardware.c"
 #include "lwip/init.h"
 void *asix_lwip_heap;
+const char *ASIXAddressMode(void){return "test";}
+s32 ASIXDhcpResult(void){return 0;}
 u32 host_ms;
 static int resume_status=-6,descriptor_error,current_config=1,set_config_count;
 static int enumerated_devices=1,chip_revision=0x0300,enumeration_calls,seed_calls;

@@ -7,3 +7,5 @@ dhcp=1
 # gateway=192.168.1.1
 # dns=192.168.1.1
 # Choose an unused address and the actual router subnet.
+
+# DHCP-first static fallback is opt-in; see slippi_asix.fallback.ini.example.

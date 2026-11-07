@@ -10,6 +10,7 @@
 #include "device_list.h"
 #include "usbstorage.h"
 #include "hardware.h"
+#include "asix.h"
 #include "lwip/pbuf.h"
 #include "netif/ethernet.h"
 #include "lwip/dhcp.h"
@@ -418,7 +419,7 @@ static void boot_file(const char *name,const void *data,unsigned length) {
 void asix_hw_boot_log(struct netif *n) {
     static char text[4096];
     int length=_sprintf(text,
-        "Slippi ASIX 0.9 DHCP broadcast preflight\r\n"
+        "Slippi ASIX 0.10 DHCP fallback preflight\r\n"
         "ip=%08x mask=%08x gateway=%08x\r\n"
         "MAC=%02x:%02x:%02x:%02x:%02x:%02x\r\n"
         "device=%08x ven=%d queue=%d failed=%d\r\n"
@@ -435,6 +436,7 @@ void asix_hw_boot_log(struct netif *n) {
         diag.tx_submit,diag.tx_submit_rc,diag.tx_done,diag.last_tx,tx_pending,tx_count,diag.frames,diag.bad_groups,diag.input_errors,
         first_rx_n,first_tx_n);
     length+=_sprintf(text+length,"rx_trace_bytes=%u groups=%u dropped=%u\r\n",rx_trace_n,rx_trace_groups,rx_trace_dropped);
+    length+=_sprintf(text+length,"address_mode=%s dhcp_result=%d\r\n",ASIXAddressMode(),ASIXDhcpResult());
     const ip4_addr_t *address=netif_ip4_addr(n);
     length+=_sprintf(text+length,"address=%u.%u.%u.%u\r\n",ip4_addr1(address),ip4_addr2(address),ip4_addr3(address),ip4_addr4(address));
     struct dhcp *lease=netif_dhcp_data(n);

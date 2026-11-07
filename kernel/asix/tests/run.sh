@@ -10,5 +10,8 @@ for test in socket_test hardware_test; do
     "$out" dhcp
     "$out" conflict
     "$out" timeout
+    "$out" fallback
+    "$out" fallback-dhcp
+    "$out" fallback-usbfail
   fi
 done

@@ -1,0 +1,8 @@
+# Laptop Internet Connection Sharing: DHCP first, then the working static setup.
+# These addresses are specific to a laptop sharing Ethernet at 192.168.137.1.
+dhcp=1
+fallback=1
+ip=192.168.137.250
+netmask=255.255.255.0
+gateway=192.168.137.1
+dns=192.168.137.1

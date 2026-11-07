@@ -33,15 +33,16 @@ static u16 checksum(const u8 *p,unsigned n,u32 sum){for(unsigned i=0;i<n;i+=2)su
 static u8 *new_frame(unsigned n,u16 protocol){assert(count<64);unsigned slot=(head+count++)%64;sizes[slot]=n;u8 *f=incoming[slot];memset(f,0,n);memcpy(f,nic.hwaddr,6);memcpy(f+6,peer_mac,6);w16(f+12,protocol);return f;}
 static void segment(u8 flags,const void *payload,unsigned n){
     u8 *f=new_frame(54+n,0x800),*ip=f+14,*tcp=ip+20;
-    ip[0]=0x45;w16(ip+2,40+n);ip[8]=64;ip[9]=6;w32(ip+12,0xc0a88901);w32(ip+16,0xc0a889fa);w16(ip+10,checksum(ip,20,0));
+    ip[0]=0x45;w16(ip+2,40+n);ip[8]=64;ip[9]=6;w32(ip+12,0xc0a88901);w32(ip+16,lwip_ntohl(ip4_addr_get_u32(netif_ip4_addr(&nic))));w16(ip+10,checksum(ip,20,0));
     w16(tcp,40000);w16(tcp+2,51441);w32(tcp+4,peer_seq);w32(tcp+8,server_seq);tcp[12]=0x50;tcp[13]=flags;w16(tcp+14,32768);
     if(n)memcpy(tcp+20,payload,n);
-    w16(tcp+16,checksum(tcp,20+n,6+20+n+0xc0a8+0x8901+0xc0a8+0x89fa));
+    w16(tcp+16,checksum(tcp,20+n,6+20+n+0xc0a8+0x8901+b16(ip+16)+b16(ip+18)));
     peer_seq+=n+!!(flags&2)+!!(flags&1);
 }
 s32 asix_hw_probe(void){return detected;}
 s32 asix_hw_init(struct netif *n){const u8 mac[6]={0x9c,0x69,0xd3,0x70,0x27,3};memcpy(n->hwaddr,mac,6);n->hwaddr_len=6;return 0;}
-int asix_hw_failed(void){return 0;}
+static int hardware_failed;
+int asix_hw_failed(void){return hardware_failed;}
 void asix_hw_shutdown(void){}
 static unsigned boot_logs;
 void asix_hw_boot_log(struct netif *n){(void)n;boot_logs++;}
@@ -94,7 +95,7 @@ err_t asix_hw_output(struct netif *n,struct pbuf *p){
     (void)n;if(block_output){rejected_outputs++;return ERR_MEM;}
     u8 f[1514];assert(p->tot_len<=sizeof(f));pbuf_copy_partial(p,f,p->tot_len,0);
     if(b16(f+12)==0x806){
-        if(b16(f+20)==1){u8 *a=new_frame(42,0x806)+14;w16(a,1);w16(a+2,0x800);a[4]=6;a[5]=4;w16(a+6,2);memcpy(a+8,peer_mac,6);w32(a+14,0xc0a88901);if(address_conflict && b32(f+28)==0 && b32(f+38)==0xc0a889fa){w32(a+14,0xc0a889fa);address_conflict--;}memcpy(a+18,nic.hwaddr,6);w32(a+24,0xc0a889fa);}return ERR_OK;
+        if(b16(f+20)==1){u8 *a=new_frame(42,0x806)+14;w16(a,1);w16(a+2,0x800);a[4]=6;a[5]=4;w16(a+6,2);memcpy(a+8,peer_mac,6);w32(a+14,0xc0a88901);if(address_conflict && b32(f+28)==0 && b32(f+38)==0xc0a889fa){w32(a+14,0xc0a889fa);address_conflict--;}memcpy(a+18,nic.hwaddr,6);w32(a+24,lwip_ntohl(ip4_addr_get_u32(netif_ip4_addr(&nic))));}return ERR_OK;
     }
     assert(b16(f+12)==0x800);u8 *ip=f+14;unsigned ih=(ip[0]&15)*4;assert(checksum(ip,ih,0)==0);
     if(ip[9]==17) {
@@ -107,7 +108,7 @@ err_t asix_hw_output(struct netif *n,struct pbuf *p){
     }
     if(ip[9]!=6)return ERR_OK;
     u8 *t=ip+ih;unsigned th=(t[12]>>4)*4,len=b16(ip+2)-ih-th;
-    assert(checksum(t,th+len,6+th+len+0xc0a8+0x89fa+0xc0a8+0x8901)==0);
+    assert(checksum(t,th+len,6+th+len+b16(ip+12)+b16(ip+14)+b16(ip+16)+b16(ip+18))==0);
     if(t[13]&4)return ERR_OK;
     if((t[13]&0x12)==0x12){synacks++;server_seq=b32(t+4)+1;segment(0x10,NULL,0);}
     if(len && drop_next_data){drop_next_data=0;dropped_segments++;return ERR_OK;}
@@ -116,18 +117,39 @@ err_t asix_hw_output(struct netif *n,struct pbuf *p){
 }
 int main(int argc,char **argv){
     if(argc>1) {
-        missing_config=1;dhcp_serving=strcmp(argv[1],"timeout")!=0;drop_discovers=1;
+        int fallback_test=!strncmp(argv[1],"fallback",8);
+        missing_config=!fallback_test;
+        if(fallback_test)config_text="dhcp=1\nfallback=1\nip=192.168.137.251\nnetmask=255.255.255.0\ngateway=192.168.137.1\ndns=1.1.1.1\n";
+        dhcp_serving=fallback_test?!strcmp(argv[1],"fallback-dhcp"):strcmp(argv[1],"timeout")!=0;
+        hardware_failed=!strcmp(argv[1],"fallback-usbfail");drop_discovers=1;
         address_conflict=!strcmp(argv[1],"conflict");
         s32 result=ASIXTryInit();
-        if(dhcp_serving) {
+        if(fallback_test && !dhcp_serving && !hardware_failed) {
+            assert(result==1 && ASIXIsActive() && NetworkStarted && fallback_used && boot_logs==1);
+            assert(current_ip_address==lwip_htonl(0xc0a889fb) && !dhcp_supplied_address(&nic));
+            assert(ip4_addr_get_u32(netif_ip4_netmask(&nic))==lwip_htonl(0xffffff00));
+            assert(ip4_addr_get_u32(netif_ip4_gw(&nic))==lwip_htonl(0xc0a88901));
+            assert(ip4_addr_get_u32(ip_2_ip4(dns_getserver(0)))==lwip_htonl(0x01010101));
+            assert(!strcmp(ASIXAddressMode(),"static-fallback") && ASIXDhcpResult()==-106);
+            host_ms+=120000;ASIXUpdate();assert(current_ip_address==lwip_htonl(0xc0a889fb));
+            assert(ASIXSocket(AF_INET,SOCK_STREAM,IPPROTO_IP)==SERVER_FD);
+            struct sockaddr_in target={0};target.sin_family=AF_INET;target.sin_port=lwip_htons(51441);
+            assert(ASIXBind(SERVER_FD,(struct sockaddr*)&target)==0 && ASIXListen(SERVER_FD,1)==0);
+            segment(2,NULL,0);s32 connected=ASIXAccept(SERVER_FD);assert(connected>=3);
+            u8 prefix[4]={0,0,0,15},back[4];segment(0x18,prefix,4);
+            assert(ASIXRecv(connected,back,4)==4 && !memcmp(prefix,back,4));
+            assert(ASIXClose(connected)==0 && ASIXClose(SERVER_FD)==0);
+            puts("PASS fallback boot: timeout selects static IP/mask/gateway/DNS; DHCP stays stopped; mirroring TCP connects");
+        } else if(dhcp_serving && !hardware_failed) {
             assert(result==1 && ASIXIsActive() && NetworkStarted && use_dhcp && discovers>=2);
-            assert(current_ip_address==lwip_htonl(0xc0a889fa) && boot_logs==1);
+            assert(current_ip_address==lwip_htonl(0xc0a889fa) && boot_logs==1 && !fallback_used);
             assert(ip4_addr_get_u32(ip_2_ip4(dns_getserver(0)))==lwip_htonl(0xc0a88901));
-            if(!strcmp(argv[1],"conflict")) { assert(declines>0);puts("PASS DHCP boot: conflicting offered address is declined before retrying"); }
-            puts("PASS DHCP boot: no configuration file, full automatic initialization, retry, address and DNS");
+            assert(!strcmp(ASIXAddressMode(),"dhcp") && ASIXDhcpResult()==0);
+            if(!strcmp(argv[1],"conflict")) {assert(declines>0);puts("PASS DHCP boot: conflicting offered address is declined before retrying");}
+            puts(fallback_test?"PASS fallback boot: successful DHCP overrides fallback IP and DNS":"PASS DHCP boot: no configuration file, full automatic initialization, retry, address and DNS");
         } else {
-            assert(result==-106 && !ASIXIsActive() && !NetworkStarted && current_ip_address==0 && boot_logs==1);
-            puts("PASS DHCP boot: no server gives bounded timeout and diagnostics, without activating network");
+            assert(result==-106 && !ASIXIsActive() && !NetworkStarted && current_ip_address==0 && boot_logs==1 && !fallback_used);
+            puts(hardware_failed?"PASS fallback boot: USB failure is not hidden by static fallback":"PASS DHCP boot: no server gives bounded timeout and diagnostics, without activating network");
         }
         return 0;
     }
@@ -157,6 +179,11 @@ int main(int argc,char **argv){
     config_text="dhcp=1\nip=192.168.137.250\n";assert(load_config(&ip,&mask,&gw)<0);
     config_text="dhcp=2\n";assert(load_config(&ip,&mask,&gw)<0);
     config_text="dhcp=1\ndhcp=1\n";assert(load_config(&ip,&mask,&gw)<0);
+    config_text="fallback=1\nip=192.168.137.250\nnetmask=255.255.255.0\n";assert(load_config(&ip,&mask,&gw)<0);
+    config_text="dhcp=1\nfallback=1\n";assert(load_config(&ip,&mask,&gw)<0);
+    config_text="dhcp=1\nfallback=2\n";assert(load_config(&ip,&mask,&gw)<0);
+    config_text="dhcp=1\nfallback=1\nfallback=1\n";assert(load_config(&ip,&mask,&gw)<0);
+    config_text="dhcp=1\nfallback=1\nip=192.168.137.250\nnetmask=255.255.255.0\ngateway=10.0.0.1\n";assert(load_config(&ip,&mask,&gw)<0);
     config_text=good;assert(ASIXTryInit()==1 && ASIXIsActive());
     assert(ASIXSocket(AF_INET,SOCK_STREAM,IPPROTO_IP)==SERVER_FD);
     struct sockaddr_in addr={0};addr.sin_family=AF_INET;addr.sin_port=lwip_htons(51441);

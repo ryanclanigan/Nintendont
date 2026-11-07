@@ -88,8 +88,8 @@ has an address, for servers that cannot unicast to an unconfigured client.
 Lease renewals retain normal unicast behavior.
 
 DHCP waits up to 30 seconds after the link is ready, including retries and
-address-conflict checks. A timeout reports **No router IP** on the TV and writes
-diagnostics; it does not guess a static address. Link failure, unsupported
+address-conflict checks. Without an explicit fallback, a timeout reports **No router IP** on the TV and
+writes diagnostics; it does not guess a static address. Link failure, unsupported
 hardware, or a disabled DHCP server still needs to be fixed.
 
 Static configuration remains available. Existing files keep their behavior:
@@ -102,8 +102,30 @@ gateway=192.168.137.1
 
 Use an unused IP and the actual subnet. IP and netmask are required in static
 mode; gateway is optional for local mirroring. An optional dns= address defaults
-to gateway. A static file may include dhcp=0. Do not combine dhcp=1 with static
-IP/netmask/gateway/DNS fields. Invalid or unreadable files report an error.
+to gateway. A static file may include dhcp=0. Only combine dhcp=1 with static IP/netmask/gateway/DNS fields when fallback=1
+is also present. Invalid or unreadable files report an error.
+For **DHCP first, static fallback after a startup timeout**, opt in explicitly:
+
+~~~ini
+dhcp=1
+fallback=1
+ip=192.168.137.250
+netmask=255.255.255.0
+gateway=192.168.137.1
+dns=192.168.137.1
+~~~
+
+This example matches the laptop sharing Ethernet at 192.168.137.1. Use an unused
+IP and the actual subnet for other setups. The file is also provided as
+[slippi_asix.fallback.ini.example](kernel/asix/slippi_asix.fallback.ini.example).
+Successful DHCP takes precedence over every fallback value, including DNS.
+If DHCP fails and USB is still healthy, its client is stopped before the static
+settings are applied. There is no background DHCP retry after static fallback,
+and a USB/adapter failure is still reported. The fallback is for initial startup;
+lease expiry after a successful DHCP start keeps the normal DHCP recovery path.
+The log records address_mode=static-fallback and dhcp_result=-106 when selected.
+Without fallback=1, the default DHCP-only timeout behavior remains unchanged.
+
 The custom stack uses DHCP or this file rather than the Wii System Menu profile;
 the native IOS path keeps its existing network settings.
 

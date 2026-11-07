@@ -33,7 +33,10 @@ static u32 mutex_store[1];
 static struct ipcmessage token;
 static u8 *received;
 static ip4_addr_t dns_server;
-static int use_dhcp;
+static int use_dhcp,static_fallback,fallback_used;
+static s32 dhcp_result;
+const char *ASIXAddressMode(void) {return fallback_used?"static-fallback":use_dhcp?"dhcp":"static";}
+s32 ASIXDhcpResult(void) {return dhcp_result;}
 #define DHCP_WAIT_MS 30000
 static unsigned rx_head,rx_count;
 static u32 clock_ticks,clock_ms,clock_remainder;
@@ -101,7 +104,7 @@ static char *trim(char *s) {
 static int load_config(ip4_addr_t *ip,ip4_addr_t *mask,ip4_addr_t *gw) {
     FIL file;u32 size;static char text[512];
     ip4_addr_set_zero(ip);ip4_addr_set_zero(mask);ip4_addr_set_zero(gw);ip4_addr_set_zero(&dns_server);
-    use_dhcp=0;
+    use_dhcp=static_fallback=fallback_used=0;dhcp_result=0;
     FRESULT opened=f_open_main_drive(&file,"/slippi_asix.ini",FA_READ|FA_OPEN_EXISTING);
     if(opened==FR_NO_FILE){use_dhcp=1;return 0;}
     if(opened!=FR_OK)return -1;
@@ -115,9 +118,12 @@ static int load_config(ip4_addr_t *ip,ip4_addr_t *mask,ip4_addr_t *gw) {
         if(*line && *line!='#' && *line!=';') {
             char *eq=strchr(line,'=');if(!eq)return -1;*eq++=0;
             char *key=trim(line),*value=trim(eq);ip4_addr_t *target;unsigned bit;
-            if(!strcmp(key,"dhcp")) {
-                if((seen&16) || (strcmp(value,"0") && strcmp(value,"1")))return -1;
-                seen|=16;use_dhcp=*value=='1';line=next;continue;
+            if(!strcmp(key,"dhcp") || !strcmp(key,"fallback")) {
+                unsigned flag=!strcmp(key,"dhcp")?16:32;
+                if((seen&flag) || (strcmp(value,"0") && strcmp(value,"1")))return -1;
+                seen|=flag;
+                if(flag==16)use_dhcp=*value=='1';else static_fallback=*value=='1';
+                line=next;continue;
             }
             if(!strcmp(key,"ip")){target=ip;bit=1;}
             else if(!strcmp(key,"netmask")){target=mask;bit=2;}
@@ -129,7 +135,8 @@ static int load_config(ip4_addr_t *ip,ip4_addr_t *mask,ip4_addr_t *gw) {
         }
         line=next;
     }
-    if(use_dhcp)return (seen&15)?-1:0;
+    if(static_fallback && !use_dhcp)return -1;
+    if(use_dhcp && !static_fallback)return (seen&15)?-1:0;
     u32 addr=lwip_ntohl(ip4_addr_get_u32(ip)),m=lwip_ntohl(ip4_addr_get_u32(mask));
     u32 gateway=lwip_ntohl(ip4_addr_get_u32(gw)),host=addr&~m;
     if((seen&3)!=3 || !m || m==0xffffffff || ((~m)&((~m)+1)) || !host || host==~m ||
@@ -151,7 +158,7 @@ static s32 acquire_dhcp(void) {
     while(result==ERR_OK && !dhcp_supplied_address(&nic) && !asix_hw_failed() &&
           (u32)(sys_now()-start)<DHCP_WAIT_MS) {pump();mdelay(1);}
     if(result!=ERR_OK || !dhcp_supplied_address(&nic) || asix_hw_failed()) {
-        asix_hw_boot_log(&nic);dhcp_stop(&nic);return -106;
+        dhcp_stop(&nic);return -106;
     }
     return 0;
 }
@@ -166,14 +173,26 @@ s32 ASIXInit(void) {
     received=heap_alloc_aligned(0,RX_SIZE,32);
     if(!received)return -104;
     lwip_init();
-    ip_addr_t resolver;ip_addr_copy_from_ip4(resolver,dns_server);dns_setserver(0,&resolver);
-    if(!netif_add(&nic,&ip,&mask,&gw,NULL,netif_setup,ethernet_input))return -103;
+    ip_addr_t resolver;ip_addr_set_zero(&resolver);
+    if(!use_dhcp)ip_addr_copy_from_ip4(resolver,dns_server);
+    dns_setserver(0,&resolver);
+    ip4_addr_t zero;ip4_addr_set_zero(&zero);
+    if(!netif_add(&nic,use_dhcp?&zero:&ip,use_dhcp?&zero:&mask,use_dhcp?&zero:&gw,
+                  NULL,netif_setup,ethernet_input))return -103;
     s32 result=asix_hw_init(&nic);
     if(result<0){asix_hw_boot_log(&nic);return result;}
     netif_set_default(&nic);netif_set_up(&nic);netif_set_link_up(&nic);
     memcpy(wifi_mac_address,nic.hwaddr,6);
     if(use_dhcp) {
-        result=acquire_dhcp();if(result<0)return result;
+        result=dhcp_result=acquire_dhcp();
+        if(result<0) {
+            if(!static_fallback || asix_hw_failed()){asix_hw_boot_log(&nic);return result;}
+            /* dhcp_stop in acquire_dhcp prevents late replies or lease timers
+             * from replacing the selected static fallback during mirroring. */
+            netif_set_addr(&nic,&ip,&mask,&gw);
+            ip_addr_copy_from_ip4(resolver,dns_server);dns_setserver(0,&resolver);
+            fallback_used=1;
+        }
     }
     current_ip_address=ip4_addr_get_u32(netif_ip4_addr(&nic));
     /* Exercise the actual Starlet data path before game/disc threads start.
