@@ -40,25 +40,70 @@ static void segment(u8 flags,const void *payload,unsigned n){
     peer_seq+=n+!!(flags&2)+!!(flags&1);
 }
 s32 asix_hw_probe(void){return detected;}
-static int legacy_native;
-int asix_hw_default_to_ios(void){return legacy_native;}
 s32 asix_hw_init(struct netif *n){const u8 mac[6]={0x9c,0x69,0xd3,0x70,0x27,3};memcpy(n->hwaddr,mac,6);n->hwaddr_len=6;return 0;}
 int asix_hw_failed(void){return 0;}
 void asix_hw_shutdown(void){}
-void asix_hw_boot_log(struct netif *n){(void)n;}
+static unsigned boot_logs;
+void asix_hw_boot_log(struct netif *n){(void)n;boot_logs++;}
 void asix_hw_poll(struct netif *n){
     if(block_output && host_ms>=unblock_at)block_output=0;
     if(!count)return;unsigned slot=head;head=(head+1)%64;count--;
     struct pbuf *p=pbuf_alloc(PBUF_RAW,sizes[slot],PBUF_POOL);assert(p);assert(pbuf_take(p,incoming[slot],sizes[slot])==ERR_OK);assert(n->input(p,n)==ERR_OK);
 }
+static int dhcp_serving,drop_discovers,drop_renewals,dhcp_nak,address_conflict;
+static unsigned discovers,requests,renewals,rebinds,declines;
+static u32 offered_dns=0xc0a88901;
+static void dhcp_reply(const u8 *query,unsigned length,u8 type,int bad_xid) {
+    assert(length>=240);u8 msg[320];memset(msg,0,sizeof(msg));
+    msg[0]=2;msg[1]=1;msg[2]=6;memcpy(msg+4,query+4,4);
+    if(bad_xid)msg[7]^=1;
+    w32(msg+16,0xc0a889fa);w32(msg+20,0xc0a88901);memcpy(msg+28,nic.hwaddr,6);w32(msg+236,0x63825363);
+    unsigned o=240;msg[o++]=53;msg[o++]=1;msg[o++]=type;
+    u8 keys[]={54,51,1,3,6,58,59};u32 vals[]={0xc0a88901,600,0xffffff00,0xc0a88901,offered_dns,60,120};
+    for(unsigned i=0;i<7;i++){msg[o++]=keys[i];msg[o++]=4;w32(msg+o,vals[i]);o+=4;}msg[o++]=255;
+    u8 *ip=new_frame(42+o,0x800)+14,*udp=ip+20;ip[0]=0x45;ip[8]=64;ip[9]=17;
+    w16(ip+2,28+o);w32(ip+12,0xc0a88901);w32(ip+16,0xffffffff);w16(ip+10,checksum(ip,20,0));
+    w16(udp,67);w16(udp+2,68);w16(udp+4,8+o);memcpy(udp+8,msg,o);
+}
+static void serve_dhcp(const u8 *ip,const u8 *udp,unsigned length) {
+    assert(b16(udp)==68 && length>=240);const u8 *msg=udp+8;
+    assert(msg[0]==1 && b32(msg+236)==0x63825363 && !memcmp(msg+28,nic.hwaddr,6));
+    unsigned type=0;
+    for(unsigned i=240;i<length;) {
+        unsigned key=msg[i++];if(key==255)break;if(!key)continue;
+        assert(i<length);unsigned size=msg[i++];assert(size<=length-i);
+        if(key==53 && size==1)type=msg[i];i+=size;
+    }
+    if(type==1) {
+        discovers++;if(!dhcp_serving)return;
+        if(drop_discovers){drop_discovers--;return;}
+        dhcp_reply(msg,length,2,1); /* wrong transaction must not be accepted */
+        dhcp_reply(msg,length,2,0);
+    } else if(type==3) {
+        requests++;if(!dhcp_serving)return;
+        if(b32(msg+12)) {
+            if(b32(ip+16)==0xffffffff)rebinds++;
+            else {renewals++;if(drop_renewals)return;}
+        }
+        dhcp_reply(msg,length,dhcp_nak?6:5,0);dhcp_nak=0;
+    } else if(type==4)declines++;
+    else assert(type==7);
+}
 err_t asix_hw_output(struct netif *n,struct pbuf *p){
     (void)n;if(block_output){rejected_outputs++;return ERR_MEM;}
     u8 f[1514];assert(p->tot_len<=sizeof(f));pbuf_copy_partial(p,f,p->tot_len,0);
     if(b16(f+12)==0x806){
-        if(b16(f+20)==1){u8 *a=new_frame(42,0x806)+14;w16(a,1);w16(a+2,0x800);a[4]=6;a[5]=4;w16(a+6,2);memcpy(a+8,peer_mac,6);w32(a+14,0xc0a88901);memcpy(a+18,nic.hwaddr,6);w32(a+24,0xc0a889fa);}return ERR_OK;
+        if(b16(f+20)==1){u8 *a=new_frame(42,0x806)+14;w16(a,1);w16(a+2,0x800);a[4]=6;a[5]=4;w16(a+6,2);memcpy(a+8,peer_mac,6);w32(a+14,0xc0a88901);if(address_conflict && b32(f+28)==0 && b32(f+38)==0xc0a889fa){w32(a+14,0xc0a889fa);address_conflict--;}memcpy(a+18,nic.hwaddr,6);w32(a+24,0xc0a889fa);}return ERR_OK;
     }
     assert(b16(f+12)==0x800);u8 *ip=f+14;unsigned ih=(ip[0]&15)*4;assert(checksum(ip,ih,0)==0);
-    if(ip[9]==17){u8 *udp=ip+ih;assert(b32(ip+16)==0xffffffff && b16(udp+2)==20582 && b16(udp+4)==56);assert(!memcmp(udp+8,"SLIP_READY",10));broadcasts++;return ERR_OK;}
+    if(ip[9]==17) {
+        assert(!(b16(ip+6)&0x3fff));
+        u8 *udp=ip+ih;unsigned length=b16(udp+4)-8;
+        if(b16(udp+2)==67){serve_dhcp(ip,udp,length);return ERR_OK;}
+        if(b16(udp+2)==20582){assert(b32(ip+16)==0xffffffff && length==48);assert(!memcmp(udp+8,"SLIP_READY",10));broadcasts++;}
+        else assert(!"unexpected UDP destination");
+        return ERR_OK;
+    }
     if(ip[9]!=6)return ERR_OK;
     u8 *t=ip+ih;unsigned th=(t[12]>>4)*4,len=b16(ip+2)-ih-th;
     assert(checksum(t,th+len,6+th+len+0xc0a8+0x89fa+0xc0a8+0x8901)==0);
@@ -68,7 +113,23 @@ err_t asix_hw_output(struct netif *n,struct pbuf *p){
     if(len){u32 seq=b32(t+4);if(seq>server_seq){segment(0x10,NULL,0);return ERR_OK;}if(seq<server_seq)retransmits++;else {for(unsigned i=0;i<len;i++)assert(t[th+i]==(u8)((stream_bytes+i)*37+13));stream_bytes+=len;server_seq+=len;}segment(0x10,NULL,0);}
     return ERR_OK;
 }
-int main(void){
+int main(int argc,char **argv){
+    if(argc>1) {
+        missing_config=1;dhcp_serving=strcmp(argv[1],"timeout")!=0;drop_discovers=1;
+        address_conflict=!strcmp(argv[1],"conflict");
+        s32 result=ASIXTryInit();
+        if(dhcp_serving) {
+            assert(result==1 && ASIXIsActive() && NetworkStarted && use_dhcp && discovers>=2);
+            assert(current_ip_address==lwip_htonl(0xc0a889fa) && boot_logs==1);
+            assert(ip4_addr_get_u32(ip_2_ip4(dns_getserver(0)))==lwip_htonl(0xc0a88901));
+            if(!strcmp(argv[1],"conflict")) { assert(declines>0);puts("PASS DHCP boot: conflicting offered address is declined before retrying"); }
+            puts("PASS DHCP boot: no configuration file, full automatic initialization, retry, address and DNS");
+        } else {
+            assert(result==-106 && !ASIXIsActive() && !NetworkStarted && current_ip_address==0 && boot_logs==1);
+            puts("PASS DHCP boot: no server gives bounded timeout and diagnostics, without activating network");
+        }
+        return 0;
+    }
     usb_device_entry entries[2]={{(s32)0x80010001,0x0b95,0x1790,0},{123,0x1234,0x5678,0}};
     s32 device_id=0;
     assert(asix_find_device(entries,2,&device_id) && device_id==(s32)0x80010001);
@@ -84,14 +145,18 @@ int main(void){
     config_text="ip=192.168.137.250\nnetmask=255.0.255.0\n";assert(load_config(&ip,&mask,&gw)<0);
     config_text="ip=192.168.137.250\nip=192.168.137.249\nnetmask=255.255.255.0\n";assert(load_config(&ip,&mask,&gw)<0);
     config_text="ip=192.168.137.250\nnetmask=255.255.255.0\ngateway=10.0.0.1\n";assert(load_config(&ip,&mask,&gw)<0);
+    config_text="ip=192.168.137.250\nnetmask=255.255.255.0\ndns=224.0.0.1\n";assert(load_config(&ip,&mask,&gw)<0);
+    config_text="ip=192.168.137.250\nnetmask=255.255.255.0\ngateway=192.168.137.1\ndns=1.1.1.1\n";assert(load_config(&ip,&mask,&gw)==0 && ip4_addr_get_u32(&dns_server)==lwip_htonl(0x01010101));
     config_text="invalid";config_reads=0;detected=0;
     assert(ASIXTryInit()==0 && !ASIXIsActive() && config_reads==0);
     detected=-5;assert(ASIXTryInit()==0 && !ASIXIsActive() && config_reads==0);
     detected=1;assert(ASIXTryInit()==-101 && !ASIXIsActive());
-    missing_config=1;legacy_native=1;assert(ASIXTryInit()==0 && !ASIXIsActive());
-    legacy_native=0;assert(ASIXTryInit()==-101 && !ASIXIsActive());
-    missing_config=0;legacy_native=1;assert(ASIXTryInit()==-101 && !ASIXIsActive());
-    legacy_native=0;config_text=good;assert(ASIXTryInit()==1 && ASIXIsActive());
+    missing_config=1;assert(load_config(&ip,&mask,&gw)==0 && use_dhcp);
+    missing_config=0;config_text="dhcp=1\n";assert(load_config(&ip,&mask,&gw)==0 && use_dhcp);
+    config_text="dhcp=1\nip=192.168.137.250\n";assert(load_config(&ip,&mask,&gw)<0);
+    config_text="dhcp=2\n";assert(load_config(&ip,&mask,&gw)<0);
+    config_text="dhcp=1\ndhcp=1\n";assert(load_config(&ip,&mask,&gw)<0);
+    config_text=good;assert(ASIXTryInit()==1 && ASIXIsActive());
     assert(ASIXSocket(AF_INET,SOCK_STREAM,IPPROTO_IP)==SERVER_FD);
     struct sockaddr_in addr={0};addr.sin_family=AF_INET;addr.sin_port=lwip_htons(51441);
     assert(ASIXBind(SERVER_FD,(struct sockaddr*)&addr)==0);assert(ASIXListen(SERVER_FD,1)==0);
@@ -110,5 +175,25 @@ int main(void){
     peer_seq=2000;server_seq=0;segment(2,NULL,0);s32 next=ASIXAccept(SERVER_FD);assert(next!=fd);
     assert(ASIXRecv(fd,readback,4)<0);
     poller.socket=next;segment(0x11,NULL,0);assert(ASIXPoll(&poller,1,10)==1);assert(ASIXRecv(next,readback,4)==0);assert(ASIXClose(next)==0);assert(ASIXClose(SERVER_FD)==0);assert(ASIXClose(UDP_FD)==0);
+    use_dhcp=1;netif_set_addr(&nic,IP4_ADDR_ANY4,IP4_ADDR_ANY4,IP4_ADDR_ANY4);
+    dhcp_serving=1;drop_discovers=1;dhcp_nak=1;
+    assert(acquire_dhcp()==0 && discovers>=3 && requests>=2 && dhcp_supplied_address(&nic));
+    assert(current_ip_address==lwip_htonl(0xc0a889fa));
+    assert(ip4_addr_get_u32(netif_ip4_netmask(&nic))==lwip_htonl(0xffffff00));
+    assert(ip4_addr_get_u32(netif_ip4_gw(&nic))==lwip_htonl(0xc0a88901));
+    assert(ip4_addr_get_u32(ip_2_ip4(dns_getserver(0)))==lwip_htonl(offered_dns));
+    offered_dns=0x08080808;host_ms+=60000;
+    for(unsigned i=0;i<8;i++)ASIXUpdate();
+    assert(renewals>0 && dhcp_supplied_address(&nic));
+    assert(ip4_addr_get_u32(ip_2_ip4(dns_getserver(0)))==lwip_htonl(offered_dns));
+    drop_renewals=1;
+    for(unsigned step=0;step<3;step++){host_ms+=60000;for(unsigned i=0;i<8;i++)ASIXUpdate();}
+    assert(rebinds>0 && dhcp_supplied_address(&nic));
+    /* Loss of the server cannot leave the expired address advertised. */
+    dhcp_serving=0;struct dhcp *lease=netif_dhcp_data(&nic);lease->t0_timeout=lease->lease_used+1;
+    host_ms+=60000;ASIXUpdate();assert(!dhcp_supplied_address(&nic) && current_ip_address==0);
+    dhcp_stop(&nic);netif_set_addr(&nic,IP4_ADDR_ANY4,IP4_ADDR_ANY4,IP4_ADDR_ANY4);
+    u32 began=sys_now();assert(acquire_dhcp()==-106 && (u32)(sys_now()-began)>=DHCP_WAIT_MS && current_ip_address==0);
+    puts("PASS DHCP: discover loss/retry, invalid transaction rejection, NAK recovery, address/mask/router/DNS, renewal, rebinding, lease expiry and startup timeout");
     printf("PASS: automatic selection/fallback, signed USB IDs, config rejection, fragmented prefix, 250000 replay bytes, retransmission/backpressure, UDP discovery, RST/reconnect and FIN\n");return 0;
 }

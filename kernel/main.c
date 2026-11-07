@@ -320,7 +320,7 @@ int _main( int argc, char *argv[] )
 		if (ret < 0) {
 			dbgprintf("Network initialization failed: %d\n", ret);
 			BootStatusError(-NETWORK_INIT, ret);
-			mdelay(4000);
+			mdelay(ret == -106 ? 8000 : 4000);
 			Shutdown();
 		}
 		NetworkStarted = 1;

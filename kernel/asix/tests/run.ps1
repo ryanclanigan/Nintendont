@@ -23,6 +23,12 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Compilation failed: $testName" }
         & $testOutput
         if ($LASTEXITCODE -ne 0) { throw "Test failed: $testName" }
+        if ($testName -eq 'socket_test.c') {
+            foreach ($mode in @('dhcp', 'conflict', 'timeout')) {
+                & $testOutput $mode
+                if ($LASTEXITCODE -ne 0) { throw "Test failed: $testName $mode" }
+            }
+        }
     }
 } finally {
     if (Test-Path -LiteralPath $testOutput) { Remove-Item -LiteralPath $testOutput }

@@ -52,54 +52,62 @@ PHY modes other than Marvell/RTL8211CL are not implemented. AX88772B/C currently
 requires the standard internal Ethernet MAC mode. Gigabit families negotiate
 10/100/1000 links, but this does not make the Wii's USB bus run at gigabit speed.
 
-If no supported adapter is detected, Nintendont uses existing IOS networking.
-Legacy adapters also keep that path when **slippi_asix.ini is absent**, preserving
-normal Wii LAN-adapter setups. Providing a valid file selects the custom driver
-for a recognized legacy adapter. An invalid file is reported as an error.
-AX88772D/E and AX88178A require the file. Native fallback does not imply that IOS
-supports an otherwise unrecognized adapter.
+With **Slippi Networking = Yes**, recognized USB 2.0 ASIX adapters now use
+**DHCP automatically** when no slippi_asix.ini exists. The router (or laptop
+internet-sharing DHCP server) supplies the IP, subnet mask, gateway and DNS.
+There is no additional ASIX toggle. With networking off, the driver is inactive.
+Unrecognized adapters use existing IOS networking; that fallback does not imply
+IOS supports every otherwise unrecognized device.
 
-Connect the adapter and Ethernet cable before launching Melee. Hotplug and link
-renegotiation are not supported. With Slippi Networking off, the ASIX driver is
-not probed or initialized.
+Connect the adapter and cable before launching Melee. Hotplug and runtime link
+renegotiation are not supported. DHCP renewal and rebinding do continue while
+the game runs; an expired address is cleared while the client tries again.
+Address changes or a lost router can interrupt an existing mirroring connection.
 
-The ASIX driver and TCP/IP stack are compiled into **boot.dol**. There are no
-separate ASIX library, driver, or firmware files to install on the SD card, and
-no ISO patch or additional IOS installation is needed for this feature.
+The driver and lwIP stack are compiled into **boot.dol**. There are no separate
+ASIX library, driver, or firmware files to install, and no ISO patch or
+additional IOS installation is needed for this feature.
 
-1. Install a build of this repository containing automatic ASIX support.
-   Copy its app folder, including boot.dol, meta.xml and icon.png, into the
-   Homebrew Channel's apps directory on your SD card.
-2. Copy [slippi_asix.ini.example](kernel/asix/slippi_asix.ini.example) to the
-   **root of the device holding Melee**, renamed to **slippi_asix.ini**.
-   For Melee on SD, use **SD:/slippi_asix.ini**; for Melee on USB, use
-   **USB:/slippi_asix.ini**. CI release packages include the example at their root.
-3. Edit the file for your Ethernet subnet. Use an unused static IP address for
-   the Wii. For example, with Windows Internet Connection Sharing using
-   192.168.137.1 on the laptop's Ethernet interface:
+1. Install a build of this repository containing ASIX DHCP support. Copy its app
+   folder into the Homebrew Channel's apps directory on your SD card.
+2. For automatic setup, leave **slippi_asix.ini absent**, or use a file containing
+   **dhcp=1**. If upgrading from a static setup, rename/remove the old file or
+   replace it with the DHCP example. The location is the **root of the device
+   holding Melee**: SD:/slippi_asix.ini for an SD game, USB:/slippi_asix.ini for a
+   USB game. CI release packages include
+   [slippi_asix.ini.example](kernel/asix/slippi_asix.ini.example) at their root.
+3. Connect Ethernet to a router with DHCP enabled (or a laptop actively sharing
+   internet with a DHCP server). Set **Slippi Networking = Yes** and launch Melee.
+4. Use Slippi console discovery to connect. The assigned IP can change; read
+   **address=** in slippi_asix_boot.log on the game device to find it for ping.
+   Mirroring uses TCP **51441**, with discovery broadcasts on UDP **20582**;
+   the laptop and Wii must be on the same subnet for discovery.
 
-   ~~~ini
-   ip=192.168.137.250
-   netmask=255.255.255.0
-   gateway=192.168.137.1
-   ~~~
+DHCP waits up to 30 seconds after the link is ready, including retries and
+address-conflict checks. A timeout reports **No router IP** on the TV and writes
+diagnostics; it does not guess a static address. Link failure, unsupported
+hardware, or a disabled DHCP server still needs to be fixed.
 
-   IP and netmask are required. Gateway is optional for communication within
-   the same subnet and defaults to 0.0.0.0. DHCP and address-conflict detection
-   are not implemented; choose an address that is not used by another device.
-4. Set **Slippi Networking = Yes** in Slippi settings, then launch Melee.
-   Nintendont detects and selects the supported adapter automatically.
-5. Connect using the Slippi console mirroring client on the laptop. This uses
-   TCP port **51441**, with console discovery broadcasts on UDP port **20582**.
-   Both devices must be on the same Ethernet subnet for local discovery.
+Static configuration remains available. Existing files keep their behavior:
 
-The custom ASIX driver uses the static configuration file above.
-Wi-Fi and legacy LAN-adapter users retaining IOS networking do not need that file. For the custom driver, these
-settings replace the Wii System Menu's network profile. To check connectivity, ping the configured Wii IP while Melee is
-running. Startup writes **slippi_asix_boot.log**, **slippi_asix_rx.bin** and
-**slippi_asix_tx.bin** to the root of the game device. If initialization fails,
-record the on-screen code and inspect the boot log; packet captures can be empty
-when failure occurs before network traffic starts.
+~~~ini
+ip=192.168.137.250
+netmask=255.255.255.0
+gateway=192.168.137.1
+~~~
+
+Use an unused IP and the actual subnet. IP and netmask are required in static
+mode; gateway is optional for local mirroring. An optional dns= address defaults
+to gateway. A static file may include dhcp=0. Do not combine dhcp=1 with static
+IP/netmask/gateway/DNS fields. Invalid or unreadable files report an error.
+The custom stack uses DHCP or this file rather than the Wii System Menu profile;
+the native IOS path keeps its existing network settings.
+
+Startup writes **slippi_asix_boot.log**, **slippi_asix_rx.bin** and
+**slippi_asix_tx.bin** to the game device root. The log records the assigned IP,
+DHCP state, DNS, family, revision, endpoints and I/O results. Captures may be
+empty when initialization fails before traffic. DHCP and the additional adapter
+families still need physical Wii validation in this build.
 
 ## Developers
 See [README.md](https://github.com/FIX94/Nintendont/blob/master/README.md) for standard Nintendont if you're new to Nintendont.
@@ -133,7 +141,10 @@ No Linux module, firmware download, or EEPROM programming is used on the Wii.
 The host tests exercise the production driver initialization against simulated
 IOS for every implemented family, endpoint selection, MII ownership/link failures,
 USB 3.0 exclusion, all legacy header/payload split positions, malformed aggregates,
-and TX padding at USB packet boundaries. The socket tests use real lwIP with
+and TX padding at USB packet boundaries. Full DHCP startup tests cover no-file
+auto configuration, dropped discovers/retries, wrong transaction IDs, NAK and
+address-conflict recovery, IP/router/DNS, renewal, rebinding, expiry and timeout.
+The socket tests use real lwIP with
 a simulated network peer (250,000 replay bytes, loss/backpressure, discovery,
 reconnect and FIN):
 

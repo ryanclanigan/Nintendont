@@ -58,8 +58,9 @@ Nintendont has two main components:
   between some Gamecube game and IOS/hardware components
 
 ### Wii Networking
-For automatically detected AX88772D adapters, follow the [ASIX installation instructions](README.md#automatic-asix-ethernet).
-Its static IP configuration is stored in slippi_asix.ini on the game device.
+For automatically detected USB 2.0 ASIX adapters, follow the [ASIX installation instructions](README.md#automatic-asix-ethernet).
+DHCP configures the connection automatically. An optional slippi_asix.ini on the
+game device selects DHCP explicitly or supplies a static IP configuration.
 
 For the default IOS backend, network initialization should succeed assuming that the user has a valid network
 connection profile, and that IOS is able to actually establish connectivity.

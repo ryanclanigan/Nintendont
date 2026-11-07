@@ -12,6 +12,8 @@
 #include "hardware.h"
 #include "lwip/pbuf.h"
 #include "netif/ethernet.h"
+#include "lwip/dhcp.h"
+#include "lwip/dns.h"
 #define report dbgprintf
 #define RX_CAPACITY 8192
 #define TX_SLOTS 8
@@ -317,9 +319,6 @@ s32 asix_hw_probe(void) {
     if(!probed){cached_probe_result=probe_adapter();probed=1;}
     return cached_probe_result;
 }
-int asix_hw_default_to_ios(void) {
-    return family!=AX_772DE && family!=AX_178A;
-}
 s32 asix_hw_init(struct netif *n) {
     s32 result=asix_hw_probe();
     if(result!=1)return result<0?result:-3;
@@ -404,7 +403,7 @@ static void boot_file(const char *name,const void *data,unsigned length) {
 void asix_hw_boot_log(struct netif *n) {
     static char text[4096];
     int length=_sprintf(text,
-        "Slippi ASIX 0.7 Starlet preflight\r\n"
+        "Slippi ASIX 0.8 DHCP preflight\r\n"
         "ip=%08x mask=%08x gateway=%08x\r\n"
         "MAC=%02x:%02x:%02x:%02x:%02x:%02x\r\n"
         "device=%08x ven=%d queue=%d failed=%d\r\n"
@@ -420,6 +419,10 @@ void asix_hw_boot_log(struct netif *n) {
         diag.polls,diag.queue_rc,diag.unknown,diag.rx_submit,diag.rx_submit_rc,diag.rx_done,diag.last_rx,diag.rx_bytes,rx_pending,
         diag.tx_submit,diag.tx_submit_rc,diag.tx_done,diag.last_tx,tx_pending,tx_count,diag.frames,diag.bad_groups,diag.input_errors,
         first_rx_n,first_tx_n);
+    const ip4_addr_t *address=netif_ip4_addr(n);
+    length+=_sprintf(text+length,"address=%u.%u.%u.%u\r\n",ip4_addr1(address),ip4_addr2(address),ip4_addr3(address),ip4_addr4(address));
+    struct dhcp *lease=netif_dhcp_data(n);
+    length+=_sprintf(text+length,"dhcp_state=%u dns=%08x\r\n",lease?lease->state:0,ip4_addr_get_u32(ip_2_ip4(dns_getserver(0))));
     length+=_sprintf(text+length,"family=%s revision=%04x link=%u duplex=%d endpoints=%02x/%02x maxpacket=%u rx_request=%u\r\n",family_name(),revision,link_speed,link_duplex,bulk_in,bulk_out,max_packet,rx_request);
     length+=_sprintf(text+length,"enumerated=%d matched=%d attach_result=%d\r\n",attached_count,device_present,attach_result);
     length+=_sprintf(text+length,"resume_result=%d control_count=%u last_control_result=%d type=%02x request=%02x value=%04x\r\n",resume_result,control_count,last_control_result,last_control_type,last_control_request,last_control_value);

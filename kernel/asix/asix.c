@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
- * Serialized NO_SYS lwIP backend for Slippi's TCP listener and UDP discovery.
+ * Serialized NO_SYS lwIP backend for Slippi mirroring and automatic DHCP.
  * All raw API calls, callbacks and USB completions run under one IOS queue
  * mutex. Waiters release it before sleeping so broadcast and streaming threads
  * cannot enter lwIP concurrently or starve one another.
@@ -9,6 +9,8 @@
 #include "asix.h"
 #include "hardware.h"
 #include "lwip/init.h"
+#include "lwip/dns.h"
+#include "lwip/dhcp.h"
 #include "lwip/tcp.h"
 #include "lwip/udp.h"
 #include "lwip/etharp.h"
@@ -29,7 +31,10 @@ static int server_open, udp_open, accepted, dead;
 static s32 client_fd=3, mutex=-1;
 static u32 mutex_store[1];
 static struct ipcmessage token;
-static u8 received[RX_SIZE];
+static u8 *received;
+static ip4_addr_t dns_server;
+static int use_dhcp;
+#define DHCP_WAIT_MS 30000
 static unsigned rx_head,rx_count;
 static u32 clock_ticks,clock_ms,clock_remainder;
 extern s32 top_fd;
@@ -47,7 +52,10 @@ u32 sys_now(void) {
 u32 asix_random(void) { u32 r=read32(HW_TIMER)^0x61736978;IOSC_GenerateRand((u8*)&r,4);return r; }
 static void lock(void) {struct ipcmessage *m;mqueue_recv(mutex,&m,0);}
 static void unlock(void) {mqueue_send(mutex,&token,0);}
-static void pump(void) {asix_hw_poll(&nic);sys_check_timeouts();}
+static void pump(void) {
+    asix_hw_poll(&nic);sys_check_timeouts();
+    current_ip_address=ip4_addr_get_u32(netif_ip4_addr(&nic));
+}
 static void pause_unlocked(void) {unlock();mdelay(1);lock();}
 static int expired(u32 start) {return (u32)(sys_now()-start)>=WAIT_MS;}
 static int valid_client(s32 s) {return s==client_fd && accepted;}
@@ -92,63 +100,90 @@ static char *trim(char *s) {
 }
 static int load_config(ip4_addr_t *ip,ip4_addr_t *mask,ip4_addr_t *gw) {
     FIL file;u32 size;static char text[512];
+    ip4_addr_set_zero(ip);ip4_addr_set_zero(mask);ip4_addr_set_zero(gw);ip4_addr_set_zero(&dns_server);
+    use_dhcp=0;
     FRESULT opened=f_open_main_drive(&file,"/slippi_asix.ini",FA_READ|FA_OPEN_EXISTING);
-    if(opened==FR_NO_FILE)return -2;
+    if(opened==FR_NO_FILE){use_dhcp=1;return 0;}
     if(opened!=FR_OK)return -1;
     FRESULT rc=f_read(&file,text,sizeof(text)-1,&size);f_close(&file);
     if(rc!=FR_OK || size>=sizeof(text)-1)return -1;
     text[size]=0;unsigned seen=0;
-    ip4_addr_set_zero(gw);
+    ip4_addr_set_zero(gw);ip4_addr_set_zero(&dns_server);
     for(char *line=text;line && *line;) {
         char *next=strchr(line,'\n');if(next)*next++=0;
         line=trim(line);
         if(*line && *line!='#' && *line!=';') {
             char *eq=strchr(line,'=');if(!eq)return -1;*eq++=0;
             char *key=trim(line),*value=trim(eq);ip4_addr_t *target;unsigned bit;
+            if(!strcmp(key,"dhcp")) {
+                if((seen&16) || (strcmp(value,"0") && strcmp(value,"1")))return -1;
+                seen|=16;use_dhcp=*value=='1';line=next;continue;
+            }
             if(!strcmp(key,"ip")){target=ip;bit=1;}
             else if(!strcmp(key,"netmask")){target=mask;bit=2;}
             else if(!strcmp(key,"gateway")){target=gw;bit=4;}
+            else if(!strcmp(key,"dns")){target=&dns_server;bit=8;}
             else return -1;
             if((seen&bit) || !ip4addr_aton(value,target))return -1;
             seen|=bit;
         }
         line=next;
     }
+    if(use_dhcp)return (seen&15)?-1:0;
     u32 addr=lwip_ntohl(ip4_addr_get_u32(ip)),m=lwip_ntohl(ip4_addr_get_u32(mask));
     u32 gateway=lwip_ntohl(ip4_addr_get_u32(gw)),host=addr&~m;
     if((seen&3)!=3 || !m || m==0xffffffff || ((~m)&((~m)+1)) || !host || host==~m ||
        !(addr>>24) || (addr>>24)==127 || (addr>>24)>=224)return -1;
     if(gateway && (!(gateway>>24) || (gateway>>24)==127 || (gateway>>24)>=224 || (gateway&m)!=(addr&m) || gateway==addr || !(gateway&~m) || (gateway&~m)==~m))return -1;
+    if(!(seen&8))dns_server=*gw;
+    u32 dns=lwip_ntohl(ip4_addr_get_u32(&dns_server));
+    if(dns && (!(dns>>24) || (dns>>24)==127 || (dns>>24)>=224))return -1;
     return 0;
 }
 s32 ASIXTryInit(void) {
     if(asix_hw_probe()!=1)return 0;
     s32 result=ASIXInit();
-    if(result==-105 && asix_hw_default_to_ios())return 0;
-    return result==-105?-101:result<0?result:1;
+    return result<0?result:1;
+}
+static s32 acquire_dhcp(void) {
+    s32 result=dhcp_start(&nic);
+    u32 start=sys_now();
+    while(result==ERR_OK && !dhcp_supplied_address(&nic) && !asix_hw_failed() &&
+          (u32)(sys_now()-start)<DHCP_WAIT_MS) {pump();mdelay(1);}
+    if(result!=ERR_OK || !dhcp_supplied_address(&nic) || asix_hw_failed()) {
+        asix_hw_boot_log(&nic);dhcp_stop(&nic);return -106;
+    }
+    return 0;
 }
 s32 ASIXInit(void) {
     ip4_addr_t ip,mask,gw;
     int config=load_config(&ip,&mask,&gw);
-    if(config) {dbgprintf("ASIX: missing or invalid /slippi_asix.ini\n");return config==-2?-105:-101;}
+    if(config) {dbgprintf("ASIX: missing or invalid /slippi_asix.ini\n");return -101;}
     mutex=mqueue_create(mutex_store,1);if(mutex<0)return -102;
     mqueue_send(mutex,&token,0);clock_ticks=read32(HW_TIMER);
     asix_lwip_heap=heap_alloc_aligned(0,128*1024+64,32);
     if(!asix_lwip_heap)return -104;
+    received=heap_alloc_aligned(0,RX_SIZE,32);
+    if(!received)return -104;
     lwip_init();
+    ip_addr_t resolver;ip_addr_copy_from_ip4(resolver,dns_server);dns_setserver(0,&resolver);
     if(!netif_add(&nic,&ip,&mask,&gw,NULL,netif_setup,ethernet_input))return -103;
     s32 result=asix_hw_init(&nic);
     if(result<0){asix_hw_boot_log(&nic);return result;}
     netif_set_default(&nic);netif_set_up(&nic);netif_set_link_up(&nic);
-    memcpy(wifi_mac_address,nic.hwaddr,6);current_ip_address=ip4_addr_get_u32(&ip);
+    memcpy(wifi_mac_address,nic.hwaddr,6);
+    if(use_dhcp) {
+        result=acquire_dhcp();if(result<0)return result;
+    }
+    current_ip_address=ip4_addr_get_u32(netif_ip4_addr(&nic));
     /* Exercise the actual Starlet data path before game/disc threads start.
      * Diagnostics are written here so FatFS is not called from socket threads. */
-    etharp_request(&nic,&gw);
+    if(!ip4_addr_isany_val(*netif_ip4_gw(&nic)))etharp_request(&nic,netif_ip4_gw(&nic));
     u32 preflight=sys_now();
     while((u32)(sys_now()-preflight)<3000) {pump();mdelay(1);}
     asix_hw_boot_log(&nic);
     top_fd=0;NetworkStarted=1;active=1;
-    dbgprintf("ASIX: static IP %08x, Slippi TCP 51441\n",current_ip_address);
+    dbgprintf("ASIX: IP %08x, Slippi TCP 51441\n",current_ip_address);
     return 0;
 }
 s32 ASIXSocket(u32 domain,u32 type,u32 protocol) {

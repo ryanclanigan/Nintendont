@@ -1128,8 +1128,11 @@ int main(int argc, char **argv)
 				PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X, MENU_POS_Y + 20*12, "Slippi network init...");
 			if(abs(STATUS_LOADING) > NETWORK_INIT && abs(STATUS_LOADING) < 20)
 				PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X, MENU_POS_Y + 20*12, "Slippi network init... Done!");
-			if(STATUS_LOADING == -6)
-				PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*12, "Slippi network init... Error! %d Shutting down", STATUS_ERROR);
+			if(STATUS_LOADING == -6) {
+				if(STATUS_ERROR == -106)
+					PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*12, "No router IP. Check Ethernet/router; restart Nintendont.");
+				else PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*12, "Slippi network init... Error! %d Shutting down", STATUS_ERROR);
+			}
 
 			if(STATUS_LOADING == CONFIG_INIT)
 				PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X, MENU_POS_Y + 20*13, "Loading config...");
