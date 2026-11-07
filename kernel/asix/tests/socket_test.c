@@ -2,6 +2,7 @@
  * Exercises the production socket bridge and real lwIP stack with a wire peer.
  */
 #include "../asix.c"
+#include "../device_list.h"
 u32 host_ms, current_ip_address, NetworkStarted; s32 top_fd;u8 wifi_mac_address[6];
 static const char *config_text="ip=192.168.137.250\nnetmask=255.255.255.0\ngateway=192.168.137.1\n";
 static struct ipcmessage *mutex_token;
@@ -64,6 +65,13 @@ err_t asix_hw_output(struct netif *n,struct pbuf *p){
     return ERR_OK;
 }
 int main(void){
+    usb_device_entry entries[2]={{(s32)0x80010001,0x0b95,0x1790,0},{123,0x1234,0x5678,0}};
+    s32 device_id=0;
+    assert(asix_find_device(entries,2,&device_id) && device_id==(s32)0x80010001);
+    entries[0].device_id=42;assert(asix_find_device(entries,2,&device_id) && device_id==42);
+    entries[0].pid=0x7720;assert(!asix_find_device(entries,2,&device_id));
+    assert(!asix_find_device(entries,0,&device_id));
+    assert(!asix_find_device(entries,33,&device_id));
     ip4_addr_t ip,mask,gw;
     assert(load_config(&ip,&mask,&gw)==0);
     const char *good=config_text;
@@ -90,5 +98,5 @@ int main(void){
     peer_seq=2000;server_seq=0;segment(2,NULL,0);s32 next=ASIXAccept(SERVER_FD);assert(next!=fd);
     assert(ASIXRecv(fd,readback,4)<0);
     poller.socket=next;segment(0x11,NULL,0);assert(ASIXPoll(&poller,1,10)==1);assert(ASIXRecv(next,readback,4)==0);assert(ASIXClose(next)==0);assert(ASIXClose(SERVER_FD)==0);assert(ASIXClose(UDP_FD)==0);
-    printf("PASS: config rejection, fragmented prefix, 250000 replay bytes, retransmission/backpressure, UDP discovery, RST/reconnect and FIN\n");return 0;
+    printf("PASS: signed USB IDs, config rejection, fragmented prefix, 250000 replay bytes, retransmission/backpressure, UDP discovery, RST/reconnect and FIN\n");return 0;
 }

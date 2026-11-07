@@ -100,3 +100,13 @@ objects, and archive extraction checks every open/info/read/CRC/allocation resul
 A regression check confirms an updated ZIP rebuilds main.o in a parallel build.
 The corrected loader passes the full 197981-byte length. Network preflight and
 diagnostic filenames remain the same as 0.2; physical boot still needs retesting.
+
+## Adapter enumeration fix 0.4
+
+IOS VEN device IDs are opaque signed integers. A matching negative ID must
+not be confused with an error or an absent adapter. Device presence is now
+tracked separately for initialization and endpoint cancellation. The host
+regression test covers both positive and negative matching IDs, nonmatching
+VID/PID, empty lists and invalid counts using the production selection helper.
+USB initialization failures now also write the boot log with enumeration
+entries, selected ID and attach result, even when preflight cannot begin.

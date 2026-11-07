@@ -10,6 +10,7 @@ typedef uint8_t u8;typedef uint16_t u16;typedef uint32_t u32;typedef uint64_t u6
 #define ALIGNED(x) __attribute__((aligned(x)))
 #define HW_TIMER 0
 struct ipcmessage {u32 result;};
+typedef struct {void *data;u32 len;} ioctlv;
 extern u32 host_ms;
 u32 test_read32(u32 addr);
 #define read32 test_read32

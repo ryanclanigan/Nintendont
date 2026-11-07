@@ -126,7 +126,8 @@ s32 ASIXInit(void) {
     if(!asix_lwip_heap)return -104;
     lwip_init();
     if(!netif_add(&nic,&ip,&mask,&gw,NULL,netif_setup,ethernet_input))return -103;
-    s32 result=asix_hw_init(&nic);if(result<0)return result;
+    s32 result=asix_hw_init(&nic);
+    if(result<0){asix_hw_boot_log(&nic);return result;}
     netif_set_default(&nic);netif_set_up(&nic);netif_set_link_up(&nic);
     memcpy(wifi_mac_address,nic.hwaddr,6);current_ip_address=ip4_addr_get_u32(&ip);
     /* Exercise the actual Starlet data path before game/disc threads start.

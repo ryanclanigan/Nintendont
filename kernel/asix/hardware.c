@@ -7,6 +7,7 @@
 #include "Config.h"
 #include "debug.h"
 #include "usb.h"
+#include "device_list.h"
 #include "hardware.h"
 #include "lwip/pbuf.h"
 #include "netif/ethernet.h"
@@ -14,6 +15,9 @@
 #define RX_CAPACITY 8192
 #define TX_SLOTS 8
 static s32 device=-1, ven=-1, queue=-1;
+static int device_present;
+static usb_device_entry attached[32] ALIGNED(32);
+static s32 attached_count,attach_result;
 static u32 queue_store[2];
 static u8 control_data[256] ALIGNED(32);
 static u8 rx_data[RX_CAPACITY] ALIGNED(32);
@@ -198,14 +202,14 @@ int asix_hw_failed(void) { return failed; }
 s32 asix_hw_init(struct netif *n) {
     /* Consume the initial snapshot before USBStorage's main-loop watcher
      * starts. Do not register a second concurrent device-change request. */
-    static usb_device_entry list[32] ALIGNED(32);
+
     static u32 args[8] ALIGNED(32);
     ven=USB_Initialize(); if(ven<0)return -1;
-    s32 count=IOS_Ioctl(ven,USBV5_IOCTL_GETDEVICECHANGE,NULL,0,list,sizeof(list));
-    if(count<0 || count>32)return -2;
-    for(s32 i=0;i<count;i++)if(list[i].vid==0x0b95 && list[i].pid==0x1790){device=list[i].device_id;break;}
-    IOS_Ioctl(ven,USBV5_IOCTL_ATTACHFINISH,NULL,0,NULL,0);
-    if(device<0)return -3;
+    attached_count=IOS_Ioctl(ven,USBV5_IOCTL_GETDEVICECHANGE,NULL,0,attached,sizeof(attached));
+    if(attached_count<0 || attached_count>32)return -2;
+    device_present=asix_find_device(attached,attached_count,&device);
+    attach_result=IOS_Ioctl(ven,USBV5_IOCTL_ATTACHFINISH,NULL,0,NULL,0);
+    if(!device_present)return -3;
     memset(args,0,sizeof(args));args[0]=device;args[2]=1;
     if(IOS_Ioctl(ven,USBV5_IOCTL_SUSPEND_RESUME,args,sizeof(args),NULL,0)<0)return -4;
     if(read_control(device,0x80,6,0x100,0,18,"device descriptor") || le16(control_data+12)!=0x0300)return -5;
@@ -238,7 +242,7 @@ s32 asix_hw_init(struct netif *n) {
 }
 void asix_hw_shutdown(void) {
     failed=1;
-    if(device>=0) {USB_ClearHalt(device,0x82);USB_ClearHalt(device,3);}
+    if(device_present) {USB_ClearHalt(device,0x82);USB_ClearHalt(device,3);}
     /* Buffers remain allocated for the kernel lifetime, including IOS's
      * cancellation completion. No pending DMA memory is freed here. */
 }
@@ -251,12 +255,12 @@ static void boot_file(const char *name,const void *data,unsigned length) {
     }
 }
 void asix_hw_boot_log(struct netif *n) {
-    static char text[2048];
+    static char text[4096];
     int length=_sprintf(text,
-        "Slippi ASIX 0.2 Starlet preflight\r\n"
+        "Slippi ASIX 0.4 Starlet preflight\r\n"
         "ip=%08x mask=%08x gateway=%08x\r\n"
         "MAC=%02x:%02x:%02x:%02x:%02x:%02x\r\n"
-        "device=%d ven=%d queue=%d failed=%d\r\n"
+        "device=%08x ven=%d queue=%d failed=%d\r\n"
         "rx_buffer=%08x tx_buffer=%08x rx_req=%08x tx_req=%08x\r\n"
         "polls=%u queue_rc=%d unknown_completions=%u\r\n"
         "RX submits=%u submit_rc=%d done=%u last_result=%d bytes=%u pending=%d\r\n"
@@ -269,6 +273,9 @@ void asix_hw_boot_log(struct netif *n) {
         diag.polls,diag.queue_rc,diag.unknown,diag.rx_submit,diag.rx_submit_rc,diag.rx_done,diag.last_rx,diag.rx_bytes,rx_pending,
         diag.tx_submit,diag.tx_submit_rc,diag.tx_done,diag.last_tx,tx_pending,tx_count,diag.frames,diag.bad_groups,diag.input_errors,
         first_rx_n,first_tx_n);
+    length+=_sprintf(text+length,"enumerated=%d matched=%d attach_result=%d\r\n",attached_count,device_present,attach_result);
+    for(s32 i=0;i<attached_count && i<32;i++)
+        length+=_sprintf(text+length,"USB %d: id=%08x VID:PID=%04x:%04x\r\n",i,attached[i].device_id,attached[i].vid,attached[i].pid);
     boot_file("/slippi_asix_boot.log",text,length);
     if(first_rx)boot_file("/slippi_asix_rx.bin",first_rx,first_rx_n);
     if(first_tx)boot_file("/slippi_asix_tx.bin",first_tx,first_tx_n);
