@@ -3,6 +3,8 @@
 #define ASIX_HARDWARE_H
 #include "global.h"
 #include "lwip/netif.h"
+/* Cached boot-time probe: 1 supported, 0 absent/unsupported, negative I/O. */
+s32 asix_hw_probe(void);
 s32 asix_hw_init(struct netif *netif);
 void asix_hw_poll(struct netif *netif);
 void asix_hw_shutdown(void);

@@ -20,6 +20,8 @@
 #define WAIT_MS 5000
 void *asix_lwip_heap;
 void asix_assert(const char *message) {dbgprintf("ASIX assertion: %s\n",message);Shutdown();}
+static int active;
+int ASIXIsActive(void) {return active;}
 static struct netif nic;
 static struct tcp_pcb *server, *client;
 static struct udp_pcb *discovery;
@@ -117,6 +119,11 @@ static int load_config(ip4_addr_t *ip,ip4_addr_t *mask,ip4_addr_t *gw) {
     if(gateway && (!(gateway>>24) || (gateway>>24)==127 || (gateway>>24)>=224 || (gateway&m)!=(addr&m) || gateway==addr || !(gateway&~m) || (gateway&~m)==~m))return -1;
     return 0;
 }
+s32 ASIXTryInit(void) {
+    if(asix_hw_probe()!=1)return 0;
+    s32 result=ASIXInit();
+    return result<0?result:1;
+}
 s32 ASIXInit(void) {
     ip4_addr_t ip,mask,gw;
     if(load_config(&ip,&mask,&gw)) {dbgprintf("ASIX: missing or invalid /slippi_asix.ini\n");return -101;}
@@ -136,7 +143,7 @@ s32 ASIXInit(void) {
     u32 preflight=sys_now();
     while((u32)(sys_now()-preflight)<3000) {pump();mdelay(1);}
     asix_hw_boot_log(&nic);
-    top_fd=0;NetworkStarted=1;
+    top_fd=0;NetworkStarted=1;active=1;
     dbgprintf("ASIX: static IP %08x, Slippi TCP 51441\n",current_ip_address);
     return 0;
 }

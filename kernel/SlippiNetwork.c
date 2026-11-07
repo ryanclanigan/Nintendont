@@ -536,7 +536,7 @@ static u32 SlippiNetworkHandlerThread(void *arg)
 {
 	while (1)
 	{
-		if (ConfigGetConfig(NIN_CFG_ASIX_ETHERNET)) ASIXUpdate();
+		if (ASIXIsActive()) ASIXUpdate();
 		int status = getConnectionStatus();
 		switch (status)
 		{

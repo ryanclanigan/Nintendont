@@ -32,6 +32,7 @@ distribution.
 #include "debug.h"
 #include "usbstorage.h"
 #include "usb.h"
+#include "asix/asix.h"
 
 #define ROUNDDOWN32(v)				(((u32)(v)-0x1f)&~0x1f)
 
@@ -568,7 +569,7 @@ bool __has_device_after_change()
 		// known device USB LAN
 		if (AttachedDevices[i].vid == 0x0b95 &&
 			(AttachedDevices[i].pid == 0x7720 ||
-			 (AttachedDevices[i].pid == 0x1790 && ConfigGetConfig(NIN_CFG_ASIX_ETHERNET))))
+			 (AttachedDevices[i].pid == 0x1790 && ASIXIsActive())))
 			continue;
 
 		// see libogc/usb.c: USBV5_SuspendResume
@@ -655,6 +656,18 @@ bool __has_device_after_change()
 		}
 	}
 	return false;
+}
+
+/* Called during network initialization, before file-writing and device-change
+ * requests start. Keep storage discovery intact when networking probes USB. */
+void USBStorage_SeedDeviceList(const usb_device_entry *entries, u32 count)
+{
+	if (!__inited || venchangequeue < 0 || count > USB_MAX_DEVICES)
+		return;
+	memset(AttachedDevices, 0, sizeof(AttachedDevices));
+	memcpy(AttachedDevices, entries, count * sizeof(*entries));
+	venchangemsg->result = count;
+	__slippi_thread_dirty = true;
 }
 
 // Call periodically from only the main thread

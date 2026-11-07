@@ -19,19 +19,24 @@ I recommend using [Kadano's guide](https://docs.google.com/document/d/1iaPI7Mb5f
 3. Combine with [Priiloader](http://wiibrew.org/wiki/Priiloader) and [Nintendont Forwarder for Priiloader](https://github.com/jmlee337/Nintendont-Forwarder-for-Priiloader) to autoboot from power-on to Nintendont.
 4. Turn on autoboot in Nintendont settings to autoboot all the way to Melee.
 
-### Optional ASIX Ethernet
+### Automatic ASIX Ethernet
 
-The experimental **ASIX Ethernet** setting supports the **AX88772D** adapter
-with USB VID:PID **0b95:1790** and device revision **0300** on an original Wii
-running IOS58. Other adapters sharing that VID:PID, including other AX88179
-revisions, are not supported by this driver. Connect the adapter and Ethernet
-cable before launching Melee. Hotplug and link renegotiation are not supported.
+With **Slippi Networking** enabled, Nintendont automatically selects its ASIX
+driver for an **AX88772D** adapter with USB VID:PID **0b95:1790** and device
+revision **0300** on an original Wii running IOS58. No extra menu toggle is
+needed. If no supported adapter is detected, it uses the existing IOS networking
+path for Wi-Fi or an original supported LAN adapter. Other AX88179 revisions
+sharing the same VID:PID are not supported by the custom driver.
+
+Connect the adapter and Ethernet cable before launching Melee. Hotplug and link
+renegotiation are not supported. With Slippi Networking off, the ASIX driver is
+not probed or initialized.
 
 The ASIX driver and TCP/IP stack are compiled into **boot.dol**. There are no
 separate ASIX library, driver, or firmware files to install on the SD card, and
 no ISO patch or additional IOS installation is needed for this feature.
 
-1. Install a build of this repository containing the **ASIX Ethernet** setting.
+1. Install a build of this repository containing automatic ASIX support.
    Copy its app folder, including boot.dol, meta.xml and icon.png, into the
    Homebrew Channel's apps directory on your SD card.
 2. Copy [slippi_asix.ini.example](kernel/asix/slippi_asix.ini.example) to the
@@ -51,15 +56,15 @@ no ISO patch or additional IOS installation is needed for this feature.
    IP and netmask are required. Gateway is optional for communication within
    the same subnet and defaults to 0.0.0.0. DHCP and address-conflict detection
    are not implemented; choose an address that is not used by another device.
-4. Set **Slippi Networking = Yes** and **ASIX Ethernet = Yes** in Slippi settings,
-   then launch Melee. Both switches must be enabled. The ASIX option defaults
-   to off; with it off, Nintendont uses its existing IOS networking backend.
+4. Set **Slippi Networking = Yes** in Slippi settings, then launch Melee.
+   Nintendont detects and selects the supported adapter automatically.
 5. Connect using the Slippi console mirroring client on the laptop. This uses
    TCP port **51441**, with console discovery broadcasts on UDP port **20582**.
    Both devices must be on the same Ethernet subnet for local discovery.
 
-This backend uses slippi_asix.ini rather than the Wii System Menu's network
-profile. To check connectivity, ping the configured Wii IP while Melee is
+The detected ASIX adapter still requires the static configuration file above.
+Wi-Fi and original LAN-adapter users do not need that file. For ASIX, these
+settings replace the Wii System Menu's network profile. To check connectivity, ping the configured Wii IP while Melee is
 running. Startup writes **slippi_asix_boot.log**, **slippi_asix_rx.bin** and
 **slippi_asix_tx.bin** to the root of the game device. If initialization fails,
 record the on-screen code and inspect the boot log; packet captures can be empty

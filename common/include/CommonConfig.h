@@ -48,7 +48,7 @@ enum ninconfigbitpos
 	NIN_CFG_BIT_NETWORK		= (13),
 	NIN_CFG_BIT_SLIPPI_REPLAYS	= (14),
 	NIN_CFG_BIT_SLIPPI_PORT_A = (15),
-	NIN_CFG_BIT_ASIX_ETHERNET = (16), // Experimental AX88772D backend
+	// Bit 16 is reserved for the former ASIX toggle; old values are ignored.
 
 	// Internal kernel settings.
 	NIN_CFG_BIT_MC_SLOTB	= (31),	// Slot B image is loaded
@@ -73,7 +73,6 @@ enum ninconfig
 	NIN_CFG_NETWORK 	= (1<<NIN_CFG_BIT_NETWORK),
 	NIN_CFG_SLIPPI_REPLAYS 	= (1<<NIN_CFG_BIT_SLIPPI_REPLAYS),
 	NIN_CFG_SLIPPI_PORT_A 	= (1<<NIN_CFG_BIT_SLIPPI_PORT_A),
-	NIN_CFG_ASIX_ETHERNET = (1<<NIN_CFG_BIT_ASIX_ETHERNET),
 
 	NIN_CFG_MC_SLOTB	= (1<<NIN_CFG_BIT_MC_SLOTB),
 };
@@ -98,7 +97,7 @@ enum ninslippisettings
 	NIN_SLIPPI_NETWORKING,
 	NIN_SLIPPI_REPLAYS,
 	NIN_SLIPPI_REPLAYS_LED,
-	NIN_SLIPPI_ASIX_ETHERNET,
+	NIN_SLIPPI_BLANK_0,
 	NIN_SLIPPI_PORT_A,
 	NIN_SLIPPI_CUSTOM_CODES,
 	NIN_SLIPPI_BLANK_1,

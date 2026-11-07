@@ -8,6 +8,7 @@
 #include "debug.h"
 #include "usb.h"
 #include "device_list.h"
+#include "usbstorage.h"
 #include "hardware.h"
 #include "lwip/pbuf.h"
 #include "netif/ethernet.h"
@@ -15,7 +16,8 @@
 #define RX_CAPACITY 8192
 #define TX_SLOTS 8
 static s32 device=-1, ven=-1, queue=-1;
-static int device_present;
+static int device_present,probed;
+static s32 cached_probe_result;
 static usb_device_entry attached[32] ALIGNED(32);
 static s32 attached_count,attach_result,resume_result;
 static s32 last_control_result;
@@ -203,24 +205,35 @@ err_t asix_hw_output(struct netif *n,struct pbuf *p) {
     return ERR_OK;
 }
 int asix_hw_failed(void) { return failed; }
-s32 asix_hw_init(struct netif *n) {
-    /* Consume the initial snapshot before USBStorage's main-loop watcher
-     * starts. Do not register a second concurrent device-change request. */
-
+/* Probe before requiring an ASIX configuration file or initializing lwIP.
+ * Consume one snapshot and pass it to storage's existing hotplug owner. */
+static s32 probe_adapter(void) {
     static u32 args[8] ALIGNED(32);
-    ven=USB_Initialize(); if(ven<0)return -1;
+    int io_failed=0;
+    ven=USB_Initialize();if(ven<0)return -1;
     attached_count=IOS_Ioctl(ven,USBV5_IOCTL_GETDEVICECHANGE,NULL,0,attached,sizeof(attached));
     if(attached_count<0 || attached_count>32)return -2;
-    device_present=asix_find_device(attached,attached_count,&device);
+    USBStorage_SeedDeviceList(attached,attached_count);
     attach_result=IOS_Ioctl(ven,USBV5_IOCTL_ATTACHFINISH,NULL,0,NULL,0);
-    if(!device_present)return -3;
-    memset(args,0,sizeof(args));args[0]=device;args[2]=1;
-    /* Like libogc USB_OpenDevice, do not reject an already-active device
-     * solely on the resume status. Descriptor I/O below is mandatory. */
-    resume_result=IOS_Ioctl(ven,USBV5_IOCTL_SUSPEND_RESUME,args,sizeof(args),NULL,0);
-    if(read_control(device,0x80,6,0x100,0,18,"device descriptor") ||
-       le16(control_data+8)!=0x0b95 || le16(control_data+10)!=0x1790 ||
-       le16(control_data+12)!=0x0300)return -5;
+    for(s32 i=0;i<attached_count;i++) {
+        if(!asix_find_device(&attached[i],1,&device))continue;
+        memset(args,0,sizeof(args));args[0]=device;args[2]=1;
+        /* As in libogc, descriptor communication decides usability after resume. */
+        resume_result=IOS_Ioctl(ven,USBV5_IOCTL_SUSPEND_RESUME,args,sizeof(args),NULL,0);
+        if(read_control(device,0x80,6,0x100,0,18,"device descriptor")){io_failed=1;continue;}
+        if(le16(control_data+8)==0x0b95 && le16(control_data+10)==0x1790 &&
+           le16(control_data+12)==0x0300){device_present=1;return 1;}
+    }
+    device_present=0;
+    return io_failed?-5:0;
+}
+s32 asix_hw_probe(void) {
+    if(!probed){cached_probe_result=probe_adapter();probed=1;}
+    return cached_probe_result;
+}
+s32 asix_hw_init(struct netif *n) {
+    s32 result=asix_hw_probe();
+    if(result!=1)return result<0?result:-3;
     /* Validate the endpoint layout instead of applying this register sequence
      * to other chips that share the same VID/PID. */
     if(read_control(device,0x80,6,0x200,0,9,"configuration"))return -6;
@@ -271,7 +284,7 @@ static void boot_file(const char *name,const void *data,unsigned length) {
 void asix_hw_boot_log(struct netif *n) {
     static char text[4096];
     int length=_sprintf(text,
-        "Slippi ASIX 0.5 Starlet preflight\r\n"
+        "Slippi ASIX 0.6 Starlet preflight\r\n"
         "ip=%08x mask=%08x gateway=%08x\r\n"
         "MAC=%02x:%02x:%02x:%02x:%02x:%02x\r\n"
         "device=%08x ven=%d queue=%d failed=%d\r\n"

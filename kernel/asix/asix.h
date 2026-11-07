@@ -4,6 +4,9 @@
 #include "global.h"
 #include "net.h"
 s32 ASIXInit(void);
+/* 1 = selected, 0 = use native IOS, negative = selected driver failed. */
+s32 ASIXTryInit(void);
+int ASIXIsActive(void);
 s32 ASIXSocket(u32 domain, u32 type, u32 protocol);
 s32 ASIXClose(s32 sock);
 s32 ASIXBind(s32 sock, const struct sockaddr *addr);

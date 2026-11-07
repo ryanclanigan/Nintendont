@@ -161,18 +161,11 @@ static const char *desc_memcard_multi[] = {
 	"games.",
 	NULL
 };
-static const char *const desc_asix_ethernet[] = {
-	"Experimental AX88772D Ethernet.",
-	"Requires Slippi Networking.",
-	"Static IP: /slippi_asix.ini",
-	"Connect adapter before boot.", NULL
-};
-
 static const char *desc_networking[] = {
 	"Enable Slippi networking.",
-	"Network settings must be configured",
-	"in the Wii settings menu",
-	"in order to use this feature.",
+	"Wi-Fi/original LAN: Wii settings.",
+	"AX88772D: detected automatically.",
+	"Static IP: /slippi_asix.ini",
 	NULL
 };
 static const char *desc_slippi_replays[] = {
@@ -955,8 +948,6 @@ static const char *const *GetSettingsDescription(const MenuCtx *ctx)
 			return desc_slippi_replays;
 		case NIN_SLIPPI_REPLAYS_LED:
 			return desc_slippi_replays_led;
-		case NIN_SLIPPI_ASIX_ETHERNET:
-			return desc_asix_ethernet;
 		case NIN_SLIPPI_PORT_A: 
 			return desc_slippi_port_a;
 		case NIN_SLIPPI_CUSTOM_CODES:
@@ -1016,6 +1007,8 @@ static void Menu_Settings_InputHandler(MenuCtx *ctx)
 			// Handle slippi page position
 			if (ctx->settings.posX > NIN_SLIPPI_DYNAMIC_CODES_START + codeConfig->lineItemCount - 1)
 				ctx->settings.posX = 0;
+			else if (ctx->settings.posX == NIN_SLIPPI_BLANK_0)
+				ctx->settings.posX++;
 			else if (ctx->settings.posX == NIN_SLIPPI_BLANK_1 ||
 				ctx->settings.posX == NIN_SLIPPI_BLANK_2)
 			{
@@ -1057,6 +1050,8 @@ static void Menu_Settings_InputHandler(MenuCtx *ctx)
 			// Handle slippi page positioning
 			if (ctx->settings.posX < 0)
 				ctx->settings.posX = NIN_SLIPPI_DYNAMIC_CODES_START + codeConfig->lineItemCount - 1;
+			else if (ctx->settings.posX == NIN_SLIPPI_BLANK_0)
+				ctx->settings.posX--;
 			else if (ctx->settings.posX == NIN_SLIPPI_BLANK_1 || ctx->settings.posX == NIN_SLIPPI_BLANK_2)
 			{
 				// Blank spots are skipped
@@ -1243,9 +1238,6 @@ static void Menu_Settings_InputHandler(MenuCtx *ctx)
 			case NIN_SLIPPI_NETWORKING:
 				ncfg->Config ^= (NIN_CFG_NETWORK);
 				break;
-			case NIN_SLIPPI_ASIX_ETHERNET:
-				ncfg->Config ^= NIN_CFG_ASIX_ETHERNET;
-				break;
 			case NIN_SLIPPI_REPLAYS:
 				ncfg->Config ^= (NIN_CFG_SLIPPI_REPLAYS);
 				break;
@@ -1431,10 +1423,7 @@ static void Menu_Settings_Redraw(MenuCtx *ctx)
 			PrintFormat(MENU_SIZE, BLACK, MENU_POS_X + SETTINGS_X_START, SettingY(ListLoopIndex),
 					"%-18s:%-4s", "Slippi Replays LED", ncfg->ReplaysLED == 0 ? "Yes" : "No");
 		}
-		ListLoopIndex++;
-		PrintFormat(MENU_SIZE, BLACK, MENU_POS_X + SETTINGS_X_START, SettingY(ListLoopIndex),
-				"%-18s:%-4s", "ASIX Ethernet", (ncfg->Config & NIN_CFG_ASIX_ETHERNET) ? "Yes" : "No ");
-		ListLoopIndex++;
+		ListLoopIndex += 2;
 
 		// Slippi Port A
 		PrintFormat(MENU_SIZE, BLACK, MENU_POS_X + SETTINGS_X_START, SettingY(ListLoopIndex),

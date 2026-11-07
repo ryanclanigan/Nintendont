@@ -6,6 +6,7 @@
 u32 host_ms, current_ip_address, NetworkStarted; s32 top_fd;u8 wifi_mac_address[6];
 static const char *config_text="ip=192.168.137.250\nnetmask=255.255.255.0\ngateway=192.168.137.1\n";
 static struct ipcmessage *mutex_token;
+static int detected=1,config_reads;
 u32 test_read32(u32 addr){(void)addr;return host_ms*1899;}
 void mdelay(int ms){host_ms+=ms;}
 int mqueue_create(void *s,int n){(void)s;assert(n==1);return 1;}
@@ -14,7 +15,7 @@ int mqueue_send(int q,struct ipcmessage *m,int flags){assert(q==1 && !flags && !
 void *heap_alloc_aligned(int h,int n,int a){(void)h;(void)a;return calloc(1,n);}
 void Shutdown(void){assert(!"unexpected shutdown");exit(1);}
 int IOSC_GenerateRand(u8 *data,u32 n){for(unsigned i=0;i<n;i++)data[i]=17+i;return 0;}
-int f_open_main_drive(FIL *f,const char *p,int m){(void)p;(void)m;f->pos=0;return 0;}
+int f_open_main_drive(FIL *f,const char *p,int m){config_reads++;(void)p;(void)m;f->pos=0;return 0;}
 int f_read(FIL *f,void *d,unsigned max,unsigned *size){(void)f;*size=strlen(config_text);if(*size>max)*size=max;memcpy(d,config_text,*size);return 0;}
 int f_close(FIL *f){(void)f;return 0;}
 static const u8 peer_mac[6]={0x40,0xc2,0xba,0x0f,0x0d,0x9b};
@@ -38,6 +39,7 @@ static void segment(u8 flags,const void *payload,unsigned n){
     w16(tcp+16,checksum(tcp,20+n,6+20+n+0xc0a8+0x8901+0xc0a8+0x89fa));
     peer_seq+=n+!!(flags&2)+!!(flags&1);
 }
+s32 asix_hw_probe(void){return detected;}
 s32 asix_hw_init(struct netif *n){const u8 mac[6]={0x9c,0x69,0xd3,0x70,0x27,3};memcpy(n->hwaddr,mac,6);n->hwaddr_len=6;return 0;}
 int asix_hw_failed(void){return 0;}
 void asix_hw_shutdown(void){}
@@ -79,7 +81,11 @@ int main(void){
     config_text="ip=192.168.137.250\nnetmask=255.0.255.0\n";assert(load_config(&ip,&mask,&gw)<0);
     config_text="ip=192.168.137.250\nip=192.168.137.249\nnetmask=255.255.255.0\n";assert(load_config(&ip,&mask,&gw)<0);
     config_text="ip=192.168.137.250\nnetmask=255.255.255.0\ngateway=10.0.0.1\n";assert(load_config(&ip,&mask,&gw)<0);
-    config_text=good;assert(ASIXInit()==0);
+    config_text="invalid";config_reads=0;detected=0;
+    assert(ASIXTryInit()==0 && !ASIXIsActive() && config_reads==0);
+    detected=-5;assert(ASIXTryInit()==0 && !ASIXIsActive() && config_reads==0);
+    detected=1;assert(ASIXTryInit()==-101 && !ASIXIsActive());
+    config_text=good;assert(ASIXTryInit()==1 && ASIXIsActive());
     assert(ASIXSocket(AF_INET,SOCK_STREAM,IPPROTO_IP)==SERVER_FD);
     struct sockaddr_in addr={0};addr.sin_family=AF_INET;addr.sin_port=lwip_htons(51441);
     assert(ASIXBind(SERVER_FD,(struct sockaddr*)&addr)==0);assert(ASIXListen(SERVER_FD,1)==0);
@@ -98,5 +104,5 @@ int main(void){
     peer_seq=2000;server_seq=0;segment(2,NULL,0);s32 next=ASIXAccept(SERVER_FD);assert(next!=fd);
     assert(ASIXRecv(fd,readback,4)<0);
     poller.socket=next;segment(0x11,NULL,0);assert(ASIXPoll(&poller,1,10)==1);assert(ASIXRecv(next,readback,4)==0);assert(ASIXClose(next)==0);assert(ASIXClose(SERVER_FD)==0);assert(ASIXClose(UDP_FD)==0);
-    printf("PASS: signed USB IDs, config rejection, fragmented prefix, 250000 replay bytes, retransmission/backpressure, UDP discovery, RST/reconnect and FIN\n");return 0;
+    printf("PASS: automatic selection/fallback, signed USB IDs, config rejection, fragmented prefix, 250000 replay bytes, retransmission/backpressure, UDP discovery, RST/reconnect and FIN\n");return 0;
 }

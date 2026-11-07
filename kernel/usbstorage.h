@@ -1,6 +1,8 @@
 #ifndef __USBSTORAGE_H__
 #define __USBSTORAGE_H__
 
+#include "usb.h"
+
 #define	USBSTORAGE_OK			0
 #define	USBSTORAGE_ENOINTERFACE		-10000
 #define	USBSTORAGE_ESENSE		-10001
@@ -31,6 +33,8 @@ bool USBStorage_ReadSectors(u32 sector, u32 numSectors, void *buffer);
 bool USBStorage_WriteSectors(u32 sector, u32 numSectors, const void *buffer);
 void USBStorage_Shutdown(void);
 
+/* Seed the initial VEN snapshot before the hotplug watcher starts. */
+void USBStorage_SeedDeviceList(const usb_device_entry *entries, u32 count);
 void USBStorage_UpdateRegisters_MainThread(void);
 bool USBStorage_IsInserted_SlippiThread(void);
 

@@ -680,7 +680,7 @@ int _main( int argc, char *argv[] )
 		EXIShutdown();
 
 	SlippiNetworkShutdown();
-	if (NetworkStarted && ConfigGetConfig(NIN_CFG_ASIX_ETHERNET)) {
+	if (NetworkStarted && ASIXIsActive()) {
 		SlippiNetworkBroadcastShutdown();
 		ASIXShutdown();
 	}
