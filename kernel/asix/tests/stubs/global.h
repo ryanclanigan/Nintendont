@@ -26,6 +26,7 @@ int IOSC_GenerateRand(u8 *data,u32 len);
 typedef struct {unsigned pos;} FIL;
 typedef int FRESULT;
 #define FR_OK 0
+#define FR_NO_FILE 4
 #define FA_READ 1
 #define FA_WRITE 2
 #define FA_CREATE_ALWAYS 8

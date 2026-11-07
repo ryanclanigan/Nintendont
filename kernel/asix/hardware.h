@@ -5,6 +5,8 @@
 #include "lwip/netif.h"
 /* Cached boot-time probe: 1 supported, 0 absent/unsupported, negative I/O. */
 s32 asix_hw_probe(void);
+/* Legacy devices can retain native IOS networking when no static file exists. */
+int asix_hw_default_to_ios(void);
 s32 asix_hw_init(struct netif *netif);
 void asix_hw_poll(struct netif *netif);
 void asix_hw_shutdown(void);

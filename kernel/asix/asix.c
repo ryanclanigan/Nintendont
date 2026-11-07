@@ -92,7 +92,9 @@ static char *trim(char *s) {
 }
 static int load_config(ip4_addr_t *ip,ip4_addr_t *mask,ip4_addr_t *gw) {
     FIL file;u32 size;static char text[512];
-    if(f_open_main_drive(&file,"/slippi_asix.ini",FA_READ|FA_OPEN_EXISTING)!=FR_OK)return -1;
+    FRESULT opened=f_open_main_drive(&file,"/slippi_asix.ini",FA_READ|FA_OPEN_EXISTING);
+    if(opened==FR_NO_FILE)return -2;
+    if(opened!=FR_OK)return -1;
     FRESULT rc=f_read(&file,text,sizeof(text)-1,&size);f_close(&file);
     if(rc!=FR_OK || size>=sizeof(text)-1)return -1;
     text[size]=0;unsigned seen=0;
@@ -122,11 +124,13 @@ static int load_config(ip4_addr_t *ip,ip4_addr_t *mask,ip4_addr_t *gw) {
 s32 ASIXTryInit(void) {
     if(asix_hw_probe()!=1)return 0;
     s32 result=ASIXInit();
-    return result<0?result:1;
+    if(result==-105 && asix_hw_default_to_ios())return 0;
+    return result==-105?-101:result<0?result:1;
 }
 s32 ASIXInit(void) {
     ip4_addr_t ip,mask,gw;
-    if(load_config(&ip,&mask,&gw)) {dbgprintf("ASIX: missing or invalid /slippi_asix.ini\n");return -101;}
+    int config=load_config(&ip,&mask,&gw);
+    if(config) {dbgprintf("ASIX: missing or invalid /slippi_asix.ini\n");return config==-2?-105:-101;}
     mutex=mqueue_create(mutex_store,1);if(mutex<0)return -102;
     mqueue_send(mutex,&token,0);clock_ticks=read32(HW_TIMER);
     asix_lwip_heap=heap_alloc_aligned(0,128*1024+64,32);

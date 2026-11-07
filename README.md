@@ -21,12 +21,43 @@ I recommend using [Kadano's guide](https://docs.google.com/document/d/1iaPI7Mb5f
 
 ### Automatic ASIX Ethernet
 
-With **Slippi Networking** enabled, Nintendont automatically selects its ASIX
-driver for an **AX88772D** adapter with USB VID:PID **0b95:1790** and device
-revision **0300** on an original Wii running IOS58. No extra menu toggle is
-needed. If no supported adapter is detected, it uses the existing IOS networking
-path for Wi-Fi or an original supported LAN adapter. Other AX88179 revisions
-sharing the same VID:PID are not supported by the custom driver.
+With **Slippi Networking** enabled, Nintendont can automatically select its
+built-in USB 2.0 ASIX driver on an original Wii running IOS58. No additional
+menu toggle is needed. This is experimental family coverage, not a guarantee
+for every retail adapter or board configuration.
+
+| Chip family | Driver path | Physical Wii validation |
+| --- | --- | --- |
+| AX88172 | Raw Ethernet, board-specific GPIO reset | Needed |
+| AX88172A | Legacy framing, internal/external PHY selection | Needed |
+| AX88772 / AX88772A | Legacy framing, chipcode-specific reset | Needed |
+| AX88760 Ethernet function | AX88772A-compatible identity/protocol | Needed |
+| AX88772B / AX88772C | Legacy header mode, software checksums | Needed |
+| AX88178 | Legacy framing, Marvell or RTL8211CL external PHY | Needed |
+| AX88178A | USB 2.0 gigabit register/framing path | Needed |
+| AX88772D / AX88772E | Existing revision-0300 register/framing path | One revision-0300 adapter verified; D vs E is not distinguishable by these IDs |
+
+Detection uses the explicit IDs in [device_list.h](kernel/asix/device_list.h),
+including known legacy OEM IDs, and validates the USB device descriptor.
+AX88772D/E requires **0b95:1790, bcdDevice 0300**. AX88178A requires
+**0b95:178a, bcdDevice 0100**. The legacy AX88772 chipcode selects original,
+A or B/C initialization even when the advertised model name differs.
+Bulk endpoints are discovered from one interface/alternate setting rather than
+assuming all adapters have the same endpoints.
+
+USB 3.0 chipsets (AX88179/A/B and AX88279 variants) are excluded, including when
+connected at USB 2.0 speed. Unknown OEM IDs are left to IOS rather than guessed.
+Special MII/RMII bridge configurations, custom external-PHY boards, and AX88178
+PHY modes other than Marvell/RTL8211CL are not implemented. AX88772B/C currently
+requires the standard internal Ethernet MAC mode. Gigabit families negotiate
+10/100/1000 links, but this does not make the Wii's USB bus run at gigabit speed.
+
+If no supported adapter is detected, Nintendont uses existing IOS networking.
+Legacy adapters also keep that path when **slippi_asix.ini is absent**, preserving
+normal Wii LAN-adapter setups. Providing a valid file selects the custom driver
+for a recognized legacy adapter. An invalid file is reported as an error.
+AX88772D/E and AX88178A require the file. Native fallback does not imply that IOS
+supports an otherwise unrecognized adapter.
 
 Connect the adapter and Ethernet cable before launching Melee. Hotplug and link
 renegotiation are not supported. With Slippi Networking off, the ASIX driver is
@@ -62,8 +93,8 @@ no ISO patch or additional IOS installation is needed for this feature.
    TCP port **51441**, with console discovery broadcasts on UDP port **20582**.
    Both devices must be on the same Ethernet subnet for local discovery.
 
-The detected ASIX adapter still requires the static configuration file above.
-Wi-Fi and original LAN-adapter users do not need that file. For ASIX, these
+The custom ASIX driver uses the static configuration file above.
+Wi-Fi and legacy LAN-adapter users retaining IOS networking do not need that file. For the custom driver, these
 settings replace the Wii System Menu's network profile. To check connectivity, ping the configured Wii IP while Melee is
 running. Startup writes **slippi_asix_boot.log**, **slippi_asix_rx.bin** and
 **slippi_asix_tx.bin** to the root of the game device. If initialization fails,
@@ -91,8 +122,20 @@ The vendored lwIP source is pinned to commit
 Its BSD license is included in [kernel/asix/lwip/COPYING](kernel/asix/lwip/COPYING).
 Preserve that notice when distributing builds or source.
 
+The USB register sequences and legacy identity/GPIO mappings are adapted from
+[Linux v6.18 ASIX sources](https://github.com/torvalds/linux/tree/v6.18/drivers/net/usb)
+and the [official ASIX driver](https://github.com/ASIXElectronics/asix-usb-nic-linux-driver)
+at 42feb1252fe0669845a8d6714bcc77bfc19eea1d. Two additional OEM identities come from
+[ASIX legacy driver](https://github.com/ASIXElectronics/ax88772c-772b-772a-linux-driver)
+at e87b8576e6fa3accd373cff326850ab0a216df36. Attribution is retained in the source.
+No Linux module, firmware download, or EEPROM programming is used on the Wii.
+
 The host tests exercise the production driver initialization against simulated
-IOS and the socket backend against real lwIP with a simulated network peer:
+IOS for every implemented family, endpoint selection, MII ownership/link failures,
+USB 3.0 exclusion, all legacy header/payload split positions, malformed aggregates,
+and TX padding at USB packet boundaries. The socket tests use real lwIP with
+a simulated network peer (250,000 replay bytes, loss/backpressure, discovery,
+reconnect and FIN):
 
 ~~~sh
 sh kernel/asix/tests/run.sh

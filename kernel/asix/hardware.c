@@ -2,7 +2,7 @@
  * New Starlet port of the adapter sequence tested by asix-probe v0.9.
  * Register/format reference: ASIX ax88179a_772d.c/.h at
  * 42feb1252fe0669845a8d6714bcc77bfc19eea1d (ASIX, GPL-2.0-or-later).
- * Only 0b95:1790 revision 0300 (AX88772D) is supported here.
+ * USB 2.0 legacy/AX88178A variants are in variants.h.
  */
 #include "Config.h"
 #include "debug.h"
@@ -53,6 +53,7 @@ static int mac_write(s32 fd,u16 reg,const u8 *data,u16 n,const char *label) { re
 static int mac8(s32 fd,u16 reg,u8 val,const char *label) { return mac_write(fd,reg,&val,1,label); }
 static int mac16(s32 fd,u16 reg,u16 val,const char *label) { u8 b[2]={val,val>>8}; return mac_write(fd,reg,b,2,label); }
 static int phy_read(s32 fd,u16 reg,u16 *val,const char *label) { if(read_control(fd,0xc0,2,3,reg,2,label))return -1; *val=le16(control_data);return 0; }
+#include "variants.h"
 static int initialize_adapter(s32 fd, u16 *speed, int *full_duplex) {
     u8 byte = 2;
     if (write_control(fd, 8, 1, 0, NULL, 0, "select vendor firmware mode")) return -1;
@@ -132,7 +133,7 @@ static s32 submit(struct _usb_msg *r, struct ipcmessage *m,u8 ep,u8 *buf,u16 n) 
     sync_after_write(r,sizeof(*r)); sync_after_write(buf,n);
     return IOS_IoctlvAsync(ven,21,(ep&0x80)?1:2,(ep&0x80)?1:0,r->vec,queue,m);
 }
-static void receive(struct netif *n,unsigned size) {
+static void receive_de(struct netif *n,unsigned size) {
     if(size<32 || (size&7)){diag.bad_groups++;return;}
     u32 trailer=le32(rx_data+size-8);
     unsigned count=trailer&8191,off=trailer>>13,cur=0;
@@ -154,6 +155,71 @@ static void receive(struct netif *n,unsigned size) {
         }
         cur+=(len+7)&~7u;
     }
+}
+static void deliver(struct netif *n,const u8 *data,unsigned length) {
+    if(length<14 || length>1514)return;
+    struct pbuf *p=pbuf_alloc(PBUF_RAW,length,PBUF_POOL);
+    if(!p)return;
+    diag.frames++;
+    if(pbuf_take(p,data,length)!=ERR_OK || n->input(p,n)!=ERR_OK) {
+        diag.input_errors++;pbuf_free(p);
+    }
+}
+static void receive_178a(struct netif *n,unsigned size) {
+    if(size<8 || (size&7)){diag.bad_groups++;return;}
+    u32 trailer=le32(rx_data+size-4);
+    unsigned count=trailer&65535,off=trailer>>16,cur=0;
+    if(!count || (off&7) || off>size-4 || count>(size-4-off)/4) {
+        diag.bad_groups++;return;
+    }
+    /* Metadata can contain zero-length dummy entries. Validate the whole
+     * transfer before giving any Ethernet frame to the network stack. */
+    for(unsigned i=0;i<count;i++) {
+        unsigned len=(le32(rx_data+off+i*4)>>16)&8191;
+        if(cur>off || ((len+7)&~7u)>off-cur){diag.bad_groups++;return;}
+        cur+=(len+7)&~7u;
+    }
+    if(cur!=off){diag.bad_groups++;return;}
+    cur=0;
+    for(unsigned i=0;i<count;i++) {
+        u32 h=le32(rx_data+off+i*4);unsigned len=(h>>16)&8191;
+        if(!(h&0xa0000000u))deliver(n,rx_data+cur,len);
+        cur+=(len+7)&~7u;
+    }
+}
+static void reset_legacy_rx(void) {
+    legacy_header_n=legacy_have=legacy_length=legacy_padding=0;
+}
+static void receive_legacy(struct netif *n,unsigned size) {
+    unsigned pos=0;
+    while(pos<size) {
+        if(legacy_padding) {legacy_padding--;pos++;continue;}
+        if(!legacy_length) {
+            while(pos<size && legacy_header_n<4)legacy_header[legacy_header_n++]=rx_data[pos++];
+            if(legacy_header_n<4)return;
+            u32 h=le32(legacy_header);unsigned len=h&0x7ff;
+            legacy_header_n=0;
+            if(len!=((~h>>16)&0x7ff) || (len && (len<14 || len>1518))) {
+                diag.bad_groups++;reset_legacy_rx();return;
+            }
+            if(!len)continue; /* USB short-packet terminator */
+            legacy_length=len;legacy_have=0;
+        }
+        unsigned copy=legacy_length-legacy_have;
+        if(copy>size-pos)copy=size-pos;
+        memcpy(legacy_frame+legacy_have,rx_data+pos,copy);
+        pos+=copy;legacy_have+=copy;
+        if(legacy_have==legacy_length) {
+            deliver(n,legacy_frame,legacy_length);
+            legacy_padding=legacy_length&1;legacy_length=legacy_have=0;
+        }
+    }
+}
+static void receive(struct netif *n,unsigned size) {
+    if(family==AX_772DE)receive_de(n,size);
+    else if(family==AX_178A)receive_178a(n,size);
+    else if(family==AX_172)deliver(n,rx_data,size);
+    else receive_legacy(n,size);
 }
 void asix_hw_poll(struct netif *n) {
     struct ipcmessage *m;
@@ -178,14 +244,14 @@ void asix_hw_poll(struct netif *n) {
     if(!rx_pending) {
         memset(rx_data,0xa5,sizeof(rx_data));
         diag.rx_submit++;
-        diag.rx_submit_rc=submit(&rx_req,&rx_msg,0x82,rx_data,sizeof(rx_data));
+        diag.rx_submit_rc=submit(&rx_req,&rx_msg,bulk_in,rx_data,rx_request);
         if(diag.rx_submit_rc<0)failed=1;
         else rx_pending=1;
     }
     if(tx_count && !tx_pending) {
         diag.tx_submit++;
         if(first_tx && !first_tx_n){first_tx_n=tx_len[tx_head];memcpy(first_tx,tx_data[tx_head],first_tx_n);}
-        diag.tx_submit_rc=submit(&tx_req,&tx_msg,3,tx_data[tx_head],tx_len[tx_head]);
+        diag.tx_submit_rc=submit(&tx_req,&tx_msg,bulk_out,tx_data[tx_head],tx_len[tx_head]);
         if(diag.tx_submit_rc<0)failed=1;
         else tx_pending=1;
     }
@@ -196,11 +262,26 @@ err_t asix_hw_output(struct netif *n,struct pbuf *p) {
     if(p->tot_len>1514)return ERR_BUF;
     if(tx_count==TX_SLOTS)return ERR_MEM;
     unsigned slot=(tx_head+tx_count)%TX_SLOTS;
-    unsigned wire=p->tot_len<60?60:p->tot_len,total=(wire+15)&~7u;
-    u8 *out=tx_data[slot];memset(out,0,total);
-    u32 h=wire|(((wire+(wire>>8)+(wire>>16))&127)<<21)|0x80000000u;
-    for(unsigned i=0;i<4;i++)out[i]=h>>(8*i);
-    pbuf_copy_partial(p,out+8,p->tot_len,0);
+    unsigned wire=p->tot_len<60?60:p->tot_len,total,header;
+    u8 *out=tx_data[slot];memset(out,0,sizeof(tx_data[slot]));
+    if(family==AX_772DE) {
+        header=8;total=(wire+15)&~7u;
+        u32 h=wire|(((wire+(wire>>8)+(wire>>16))&127)<<21)|0x80000000u;
+        for(unsigned i=0;i<4;i++)out[i]=h>>(8*i);
+    } else if(family==AX_178A) {
+        header=8;total=wire+8;
+        out[0]=wire;out[1]=wire>>8;
+        if(!(total%max_packet)){out[5]=0x80;out[7]=0x80;}
+    } else if(family==AX_172) {
+        header=0;total=wire;
+        if(!(total%max_packet))total++; /* usbnet raw-Ethernet short transfer */
+    } else {
+        header=4;total=wire+4;
+        u32 h=wire|((wire^65535u)<<16);
+        for(unsigned i=0;i<4;i++)out[i]=h>>(8*i);
+        if(!(total%max_packet)){out[total+2]=out[total+3]=0xff;total+=4;}
+    }
+    pbuf_copy_partial(p,out+header,p->tot_len,0);
     tx_len[slot]=total;tx_count++;
     return ERR_OK;
 }
@@ -221,8 +302,13 @@ static s32 probe_adapter(void) {
         /* As in libogc, descriptor communication decides usability after resume. */
         resume_result=IOS_Ioctl(ven,USBV5_IOCTL_SUSPEND_RESUME,args,sizeof(args),NULL,0);
         if(read_control(device,0x80,6,0x100,0,18,"device descriptor")){io_failed=1;continue;}
-        if(le16(control_data+8)==0x0b95 && le16(control_data+10)==0x1790 &&
-           le16(control_data+12)==0x0300){device_present=1;return 1;}
+        if(control_data[0]!=18 || control_data[1]!=1 ||
+           le16(control_data+8)!=attached[i].vid || le16(control_data+10)!=attached[i].pid)continue;
+        identity=asix_identity(attached[i].vid,attached[i].pid);
+        revision=le16(control_data+12);
+        if(identity->family==AX_772DE && revision!=0x0300)continue;
+        if(identity->family==AX_178A && revision!=0x0100)continue;
+        family=identity->family;device_present=1;return 1;
     }
     device_present=0;
     return io_failed?-5:0;
@@ -231,24 +317,40 @@ s32 asix_hw_probe(void) {
     if(!probed){cached_probe_result=probe_adapter();probed=1;}
     return cached_probe_result;
 }
+int asix_hw_default_to_ios(void) {
+    return family!=AX_772DE && family!=AX_178A;
+}
 s32 asix_hw_init(struct netif *n) {
     s32 result=asix_hw_probe();
     if(result!=1)return result<0?result:-3;
-    /* Validate the endpoint layout instead of applying this register sequence
-     * to other chips that share the same VID/PID. */
+    /* Discover the endpoint layout for the selected USB 2.0 function. */
     if(read_control(device,0x80,6,0x200,0,9,"configuration"))return -6;
     unsigned total=le16(control_data+2);u8 config=control_data[5];
     if(total>sizeof(control_data) || total<9 || read_control(device,0x80,6,0x200,0,total,"endpoints"))return -6;
-    unsigned found=0;
+    /* Select a single interface/alternate setting with both bulk endpoints.
+     * Do not accidentally combine endpoints belonging to different functions. */
+    bulk_in=bulk_out=0;unsigned interface=0,alt=0,chosen_interface=0,chosen_alt=0;
+    u8 candidate_in=0,candidate_out=0;u16 candidate_packet=0;
     for(unsigned off=0;off+2<=total;) {
         unsigned len=control_data[off];if(len<2 || len>total-off)return -6;
-        if(control_data[off+1]==5 && len>=7 && (control_data[off+3]&3)==2) {
-            if(control_data[off+2]==0x82)found|=1;
-            if(control_data[off+2]==3)found|=2;
+        if(control_data[off+1]==4 && len>=9) {
+            interface=control_data[off+2];alt=control_data[off+3];
+            candidate_in=candidate_out=0;candidate_packet=0;
+        } else if(control_data[off+1]==5 && len>=7 && (control_data[off+3]&3)==2) {
+            u8 ep=control_data[off+2];u16 packet=le16(control_data+off+4);
+            if(!(ep&15) || (ep&0x70) || (packet!=64 && packet!=512))return -6;
+            if(ep&0x80)candidate_in=ep;
+            else {candidate_out=ep;candidate_packet=packet;}
+            if(!bulk_in && candidate_in && candidate_out) {
+                bulk_in=candidate_in;bulk_out=candidate_out;max_packet=candidate_packet;
+                chosen_interface=interface;chosen_alt=alt;
+            }
         }
         off+=len;
+        if(off==total)break;
+        if(off+2>total)return -6;
     }
-    if(found!=3)return -6;
+    if(!bulk_in || !bulk_out)return -6;
     if(read_control(device,0x80,8,0,0,1,"current configuration"))return -7;
     if(control_data[0]!=config) {
         last_control_result=USB_WriteCtrlMsg(device,0,9,config,0,0,NULL);
@@ -256,12 +358,30 @@ s32 asix_hw_init(struct netif *n) {
         if(last_control_result!=8)return -7;
         if(read_control(device,0x80,8,0,0,1,"verify configuration") || control_data[0]!=config)return -7;
     }
-    if(read_control(device,0xc0,1,0x10,6,6,"MAC"))return -8;
+    if(chosen_alt && USB_WriteCtrlMsg(device,1,11,chosen_alt,chosen_interface,0,NULL)!=8)return -7;
+    if(family==AX_178A || family==AX_772DE) {
+        if(read_control(device,0xc0,1,0x10,6,6,"MAC"))return -8;
+    } else if(family==AX_772B) {
+        u8 mac[6];
+        for(unsigned i=0;i<3;i++) {
+            if(read_control(device,0xc0,0x0b,4+i,0,2,"EEPROM MAC"))return -8;
+            memcpy(mac+i*2,control_data,2);
+        }
+        memcpy(control_data,mac,6);
+    } else if(read_control(device,0xc0,family==AX_172?0x17:0x13,0,0,6,"MAC"))return -8;
     memcpy(n->hwaddr,control_data,6);n->hwaddr_len=6;
     unsigned any=0;for(unsigned i=0;i<6;i++)any|=n->hwaddr[i];
     if(!any || (n->hwaddr[0]&1))return -8;
-    u16 speed;int duplex;
-    if(initialize_adapter(device,&speed,&duplex))return -9;
+    rx_request=RX_CAPACITY;reset_legacy_rx();
+    if(family==AX_772DE) {
+        if(initialize_adapter(device,&link_speed,&link_duplex))return -9;
+    } else if(family==AX_178A) {
+        if(init_178a(device))return -9;
+    } else if(init_legacy(device))return -9;
+    report("ASIX %s: %u Mbps %s duplex, endpoints %02x/%02x\n",
+           family_name(),link_speed,link_duplex?"full":"half",bulk_in,bulk_out);
+    if(family!=AX_172 && family!=AX_178A && family!=AX_772DE &&
+       write_control(device,0x14,0,0,n->hwaddr,6,"restore volatile MAC"))return -8;
     queue=mqueue_create(queue_store,2);if(queue<0)return -10;
     first_rx=heap_alloc_aligned(0,RX_CAPACITY,32);
     first_tx=heap_alloc_aligned(0,1568,32);
@@ -269,7 +389,7 @@ s32 asix_hw_init(struct netif *n) {
 }
 void asix_hw_shutdown(void) {
     failed=1;
-    if(device_present) {USB_ClearHalt(device,0x82);USB_ClearHalt(device,3);}
+    if(device_present) {USB_ClearHalt(device,bulk_in);USB_ClearHalt(device,bulk_out);}
     /* Buffers remain allocated for the kernel lifetime, including IOS's
      * cancellation completion. No pending DMA memory is freed here. */
 }
@@ -284,7 +404,7 @@ static void boot_file(const char *name,const void *data,unsigned length) {
 void asix_hw_boot_log(struct netif *n) {
     static char text[4096];
     int length=_sprintf(text,
-        "Slippi ASIX 0.6 Starlet preflight\r\n"
+        "Slippi ASIX 0.7 Starlet preflight\r\n"
         "ip=%08x mask=%08x gateway=%08x\r\n"
         "MAC=%02x:%02x:%02x:%02x:%02x:%02x\r\n"
         "device=%08x ven=%d queue=%d failed=%d\r\n"
@@ -300,6 +420,7 @@ void asix_hw_boot_log(struct netif *n) {
         diag.polls,diag.queue_rc,diag.unknown,diag.rx_submit,diag.rx_submit_rc,diag.rx_done,diag.last_rx,diag.rx_bytes,rx_pending,
         diag.tx_submit,diag.tx_submit_rc,diag.tx_done,diag.last_tx,tx_pending,tx_count,diag.frames,diag.bad_groups,diag.input_errors,
         first_rx_n,first_tx_n);
+    length+=_sprintf(text+length,"family=%s revision=%04x link=%u duplex=%d endpoints=%02x/%02x maxpacket=%u rx_request=%u\r\n",family_name(),revision,link_speed,link_duplex,bulk_in,bulk_out,max_packet,rx_request);
     length+=_sprintf(text+length,"enumerated=%d matched=%d attach_result=%d\r\n",attached_count,device_present,attach_result);
     length+=_sprintf(text+length,"resume_result=%d control_count=%u last_control_result=%d type=%02x request=%02x value=%04x\r\n",resume_result,control_count,last_control_result,last_control_type,last_control_request,last_control_value);
     for(s32 i=0;i<attached_count && i<32;i++)
