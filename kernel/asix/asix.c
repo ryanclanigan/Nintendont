@@ -129,6 +129,12 @@ s32 ASIXInit(void) {
     s32 result=asix_hw_init(&nic);if(result<0)return result;
     netif_set_default(&nic);netif_set_up(&nic);netif_set_link_up(&nic);
     memcpy(wifi_mac_address,nic.hwaddr,6);current_ip_address=ip4_addr_get_u32(&ip);
+    /* Exercise the actual Starlet data path before game/disc threads start.
+     * Diagnostics are written here so FatFS is not called from socket threads. */
+    etharp_request(&nic,&gw);
+    u32 preflight=sys_now();
+    while((u32)(sys_now()-preflight)<3000) {pump();mdelay(1);}
+    asix_hw_boot_log(&nic);
     top_fd=0;NetworkStarted=1;
     dbgprintf("ASIX: static IP %08x, Slippi TCP 51441\n",current_ip_address);
     return 0;

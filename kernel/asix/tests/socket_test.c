@@ -40,6 +40,7 @@ static void segment(u8 flags,const void *payload,unsigned n){
 s32 asix_hw_init(struct netif *n){const u8 mac[6]={0x9c,0x69,0xd3,0x70,0x27,3};memcpy(n->hwaddr,mac,6);n->hwaddr_len=6;return 0;}
 int asix_hw_failed(void){return 0;}
 void asix_hw_shutdown(void){}
+void asix_hw_boot_log(struct netif *n){(void)n;}
 void asix_hw_poll(struct netif *n){
     if(block_output && host_ms>=unblock_at)block_output=0;
     if(!count)return;unsigned slot=head;head=(head+1)%64;count--;

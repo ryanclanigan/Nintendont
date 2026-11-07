@@ -21,6 +21,9 @@ static u8 tx_data[TX_SLOTS][1568] ALIGNED(32);
 static u16 tx_len[TX_SLOTS];
 static unsigned tx_head, tx_count;
 static int rx_pending, tx_pending, failed;
+static struct {u32 polls,rx_submit,rx_done,rx_bytes,tx_submit,tx_done,frames,bad_groups,input_errors,unknown; s32 rx_submit_rc,tx_submit_rc,last_rx,last_tx,queue_rc;} diag;
+static u8 *first_rx,*first_tx;
+static unsigned first_rx_n,first_tx_n;
 static struct _usb_msg rx_req ALIGNED(32), tx_req ALIGNED(32);
 static struct ipcmessage rx_msg ALIGNED(32), tx_msg ALIGNED(32);
 static u16 le16(const u8 *p) { return p[0] | ((u16)p[1]<<8); }
@@ -120,50 +123,60 @@ static s32 submit(struct _usb_msg *r, struct ipcmessage *m,u8 ep,u8 *buf,u16 n) 
     return IOS_IoctlvAsync(ven,21,(ep&0x80)?1:2,(ep&0x80)?1:0,r->vec,queue,m);
 }
 static void receive(struct netif *n,unsigned size) {
-    if(size<32 || (size&7))return;
+    if(size<32 || (size&7)){diag.bad_groups++;return;}
     u32 trailer=le32(rx_data+size-8);
     unsigned count=trailer&8191,off=trailer>>13,cur=0;
-    if(!count || off>size-8 || (off&7) || count>(size-8-off)/8 || ((size-8-off-count*8)&15))return;
+    if(!count || off>size-8 || (off&7) || count>(size-8-off)/8 || ((size-8-off-count*8)&15)){diag.bad_groups++;return;}
     /* Validate every frame before delivering any to lwIP. */
     for(unsigned i=0;i<count;i++) {
         u32 h=le32(rx_data+off+i*8);unsigned len=(h>>16)&32767;
-        if(len<14 || cur>off || len>off-cur || !(h&((1u<<11)|(1u<<31))))return;
+        if(len<14 || cur>off || len>off-cur || !(h&((1u<<11)|(1u<<31)))){diag.bad_groups++;return;}
         cur+=(len+7)&~7u;
     }
-    if(cur!=off)return;
+    if(cur!=off){diag.bad_groups++;return;}
     cur=0;
     for(unsigned i=0;i<count;i++) {
         u32 h=le32(rx_data+off+i*8);unsigned len=(h>>16)&32767;
         if((h&(1u<<11)) && !(h&(1u<<31)) && len<=1514) {
+            diag.frames++;
             struct pbuf *p=pbuf_alloc(PBUF_RAW,len,PBUF_POOL);
-            if(p) { if(pbuf_take(p,rx_data+cur,len)!=ERR_OK || n->input(p,n)!=ERR_OK)pbuf_free(p); }
+            if(p) { if(pbuf_take(p,rx_data+cur,len)!=ERR_OK || n->input(p,n)!=ERR_OK){diag.input_errors++;pbuf_free(p);} }
         }
         cur+=(len+7)&~7u;
     }
 }
 void asix_hw_poll(struct netif *n) {
     struct ipcmessage *m;
-    while(queue>=0 && mqueue_recv(queue,&m,1)==0) {
+    diag.polls++;
+    while(queue>=0 && (diag.queue_rc=mqueue_recv(queue,&m,1))==0) {
         s32 result=m->result;
         if(m==&rx_msg) {
-            rx_pending=0;
+            rx_pending=0;diag.rx_done++;diag.last_rx=result;
             if(result<0 || result>RX_CAPACITY)failed=1;
-            else if(result) {sync_before_read(rx_data,result);receive(n,result);}
+            else if(result) {sync_before_read(rx_data,result);diag.rx_bytes+=result;
+                if(first_rx && !first_rx_n){first_rx_n=result;memcpy(first_rx,rx_data,result);}
+                receive(n,result);
+            }
         } else if(m==&tx_msg) {
-            tx_pending=0;
+            tx_pending=0;diag.tx_done++;diag.last_tx=result;
             if(result!=tx_len[tx_head])failed=1;
             if(tx_count) {tx_head=(tx_head+1)%TX_SLOTS;tx_count--;}
-        }
+        } else diag.unknown++;
         mqueue_ack(m,0);
     }
     if(failed)return;
     if(!rx_pending) {
         memset(rx_data,0xa5,sizeof(rx_data));
-        if(submit(&rx_req,&rx_msg,0x82,rx_data,sizeof(rx_data))<0)failed=1;
+        diag.rx_submit++;
+        diag.rx_submit_rc=submit(&rx_req,&rx_msg,0x82,rx_data,sizeof(rx_data));
+        if(diag.rx_submit_rc<0)failed=1;
         else rx_pending=1;
     }
     if(tx_count && !tx_pending) {
-        if(submit(&tx_req,&tx_msg,3,tx_data[tx_head],tx_len[tx_head])<0)failed=1;
+        diag.tx_submit++;
+        if(first_tx && !first_tx_n){first_tx_n=tx_len[tx_head];memcpy(first_tx,tx_data[tx_head],first_tx_n);}
+        diag.tx_submit_rc=submit(&tx_req,&tx_msg,3,tx_data[tx_head],tx_len[tx_head]);
+        if(diag.tx_submit_rc<0)failed=1;
         else tx_pending=1;
     }
 }
@@ -219,6 +232,8 @@ s32 asix_hw_init(struct netif *n) {
     u16 speed;int duplex;
     if(initialize_adapter(device,&speed,&duplex))return -9;
     queue=mqueue_create(queue_store,2);if(queue<0)return -10;
+    first_rx=heap_alloc_aligned(0,RX_CAPACITY,32);
+    first_tx=heap_alloc_aligned(0,1568,32);
     return 0;
 }
 void asix_hw_shutdown(void) {
@@ -226,4 +241,37 @@ void asix_hw_shutdown(void) {
     if(device>=0) {USB_ClearHalt(device,0x82);USB_ClearHalt(device,3);}
     /* Buffers remain allocated for the kernel lifetime, including IOS's
      * cancellation completion. No pending DMA memory is freed here. */
+}
+
+/* Called only during initialization, before the Slippi and disc threads start. */
+static void boot_file(const char *name,const void *data,unsigned length) {
+    FIL file;u32 written;
+    if(f_open_main_drive(&file,name,FA_CREATE_ALWAYS|FA_WRITE)==FR_OK) {
+        f_write(&file,data,length,&written);f_close(&file);
+    }
+}
+void asix_hw_boot_log(struct netif *n) {
+    static char text[2048];
+    int length=_sprintf(text,
+        "Slippi ASIX 0.2 Starlet preflight\r\n"
+        "ip=%08x mask=%08x gateway=%08x\r\n"
+        "MAC=%02x:%02x:%02x:%02x:%02x:%02x\r\n"
+        "device=%d ven=%d queue=%d failed=%d\r\n"
+        "rx_buffer=%08x tx_buffer=%08x rx_req=%08x tx_req=%08x\r\n"
+        "polls=%u queue_rc=%d unknown_completions=%u\r\n"
+        "RX submits=%u submit_rc=%d done=%u last_result=%d bytes=%u pending=%d\r\n"
+        "TX submits=%u submit_rc=%d done=%u last_result=%d pending=%d queued=%u\r\n"
+        "frames=%u malformed_groups=%u input_errors=%u\r\n"
+        "first_RX=%u first_TX=%u\r\n",
+        ip4_addr_get_u32(netif_ip4_addr(n)),ip4_addr_get_u32(netif_ip4_netmask(n)),ip4_addr_get_u32(netif_ip4_gw(n)),
+        n->hwaddr[0],n->hwaddr[1],n->hwaddr[2],n->hwaddr[3],n->hwaddr[4],n->hwaddr[5],
+        device,ven,queue,failed,(u32)rx_data,(u32)tx_data,(u32)&rx_req,(u32)&tx_req,
+        diag.polls,diag.queue_rc,diag.unknown,diag.rx_submit,diag.rx_submit_rc,diag.rx_done,diag.last_rx,diag.rx_bytes,rx_pending,
+        diag.tx_submit,diag.tx_submit_rc,diag.tx_done,diag.last_tx,tx_pending,tx_count,diag.frames,diag.bad_groups,diag.input_errors,
+        first_rx_n,first_tx_n);
+    boot_file("/slippi_asix_boot.log",text,length);
+    if(first_rx)boot_file("/slippi_asix_rx.bin",first_rx,first_rx_n);
+    if(first_tx)boot_file("/slippi_asix_tx.bin",first_tx,first_tx_n);
+    if(first_rx){heap_free(0,first_rx);first_rx=NULL;}
+    if(first_tx){heap_free(0,first_tx);first_tx=NULL;}
 }

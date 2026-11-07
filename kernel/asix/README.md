@@ -75,3 +75,17 @@ Its BSD notice is in lwip/COPYING and remains in source files.
 The Starlet port is GPL-2.0-or-later, compatible with Nintendont. The register
 and framing reference is https://github.com/ASIXElectronics/asix-usb-nic-linux-driver
 at commit 42feb1252fe0669845a8d6714bcc77bfc19eea1d. See hardware.c for attribution.
+
+## Diagnostic build 0.2
+
+A three-second Starlet preflight runs after initialization and before Slippi/disc
+threads start. It pumps USB/lwIP and requests the configured gateway via ARP.
+It saves /slippi_asix_boot.log plus /slippi_asix_rx.bin and /slippi_asix_tx.bin
+on the game device. The binary files contain the first raw USB transfer in each
+direction, without a capture-container header; an empty RX file means no positive
+receive completion was captured. The log records queue/submit/completion results,
+buffer addresses, frame validation and input errors. File writes occur before
+normal game threads begin, rather than adding concurrent FatFS calls.
+
+This is instrumentation for the reported integrated ping/discovery failure.
+It does not establish or claim a fix for that failure.
