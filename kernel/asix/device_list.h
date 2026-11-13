@@ -3,7 +3,7 @@
 #define SLIPPI_ASIX_DEVICE_LIST_H
 #include "global.h"
 #include "usb.h"
-enum asix_family { AX_NONE, AX_172, AX_172A, AX_772, AX_772B, AX_178, AX_178A, AX_772DE };
+enum asix_family { AX_NONE, AX_172, AX_172A, AX_772, AX_772B, AX_178, AX_178A, AX_772DE, RTL_8152 };
 struct asix_id { u16 vid,pid; enum asix_family family; u32 gpio; };
 /* Legacy identities and board GPIO sequences: Linux v6.18 asix_devices.c.
  * Never infer compatibility from the vendor alone. 1790 is shared by USB 3
@@ -50,7 +50,9 @@ static const struct asix_id asix_ids[] = {
     {0x125e,0x180d,AX_772,0},
     {0x0421,0x772a,AX_772,0},
     {0x0b95,0x178a,AX_178A,0},
-    {0x0b95,0x1790,AX_772DE,0}
+    {0x0b95,0x1790,AX_772DE,0},
+    /* RTL8152B only; the internal silicon version is checked before writes. */
+    {0x0bda,0x8152,RTL_8152,0}
 };
 static const struct asix_id *asix_identity(u16 vid,u16 pid) {
     for(unsigned i=0;i<sizeof(asix_ids)/sizeof(asix_ids[0]);i++)

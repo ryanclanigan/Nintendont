@@ -19,6 +19,7 @@ static const char *family_name(void) {
     case AX_772:return "AX88772/A (chipcode selected)";
     case AX_772B:return "AX88772B/C";case AX_178:return "AX88178";
     case AX_178A:return "AX88178A";case AX_772DE:return "AX88772D/E";
+    case RTL_8152:return "RTL8152B";
     default:return "none";
     }
 }

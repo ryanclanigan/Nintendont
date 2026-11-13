@@ -35,6 +35,7 @@ for every retail adapter or board configuration.
 | AX88772B / AX88772C | Legacy header mode, software checksums | Needed |
 | AX88178 | Legacy framing, Marvell or RTL8211CL external PHY | Needed |
 | AX88178A | USB 2.0 gigabit register/framing path | Needed |
+| RTL8152B | Realtek register mode, 24-byte RX / 8-byte TX descriptors | Needed |
 | AX88772D / AX88772E | Existing revision-0300 register/framing path | One revision-0300 adapter verified; D vs E is not distinguishable by these IDs |
 
 Detection uses the explicit IDs in [device_list.h](kernel/asix/device_list.h),
@@ -42,6 +43,17 @@ including known legacy OEM IDs, and validates the USB device descriptor.
 AX88772D/E requires **0b95:1790, bcdDevice 0300**. AX88178A requires
 **0b95:178a, bcdDevice 0100**. The legacy AX88772 chipcode selects original,
 A or B/C initialization even when the advertised model name differs.
+RTL8152B requires **0bda:8152** and internal silicon ID **4c10** (revision 2)
+or **4800** (revision 7), read from TCR1. Windows **REV_2000** is the USB revision;
+it does not prove the internal silicon version. Unsupported/unreadable silicon
+returns -12 before vendor writes and is recorded as silicon= in the boot log.
+Original 4c00 revision 1 and Realtek USB 3 adapters are outside this port.
+Vendor-specific configurations are searched instead of using a CDC interface.
+Revision 2 uses a built-in 648-byte volatile RAM patch; revision 7 does not.
+Both use software checksums, no VLAN stripping or RX aggregation, and standard
+10/100 Mbps Ethernet frames. No EEPROM/eFuse is programmed.
+Physical Realtek Wii validation is pending.
+
 Bulk endpoints are discovered from one interface/alternate setting rather than
 assuming all adapters have the same endpoints.
 
@@ -52,7 +64,7 @@ PHY modes other than Marvell/RTL8211CL are not implemented. AX88772B/C currently
 requires the standard internal Ethernet MAC mode. Gigabit families negotiate
 10/100/1000 links, but this does not make the Wii's USB bus run at gigabit speed.
 
-With **Slippi Networking = Yes**, recognized USB 2.0 ASIX adapters now use
+With **Slippi Networking = Yes**, recognized USB 2.0 ASIX and RTL8152B adapters now use
 **DHCP automatically** when no slippi_asix.ini exists. The router (or laptop
 internet-sharing DHCP server) supplies the IP, subnet mask, gateway and DNS.
 There is no additional ASIX toggle. With networking off, the driver is inactive.
@@ -65,7 +77,7 @@ the game runs; an expired address is cleared while the client tries again.
 Address changes or a lost router can interrupt an existing mirroring connection.
 
 The driver and lwIP stack are compiled into **boot.dol**. There are no separate
-ASIX library, driver, or firmware files to install, and no ISO patch or
+adapter library, driver, or firmware files to install, and no ISO patch or
 additional IOS installation is needed for this feature.
 
 1. Install a build of this repository containing ASIX DHCP support. Copy its app
@@ -135,7 +147,7 @@ Startup writes **slippi_asix_boot.log**, **slippi_asix_rx.bin** and
 USB groups, each prefixed with its little-endian u32 length. This preserves
 replies arriving after the first packet; trace overflow is counted in the log.
 The log records the assigned IP,
-DHCP state, DNS, family, revision, endpoints and I/O results. Captures may be
+DHCP state, DNS, family, revision, Realtek silicon ID, endpoints and I/O results. Captures may be
 empty when initialization fails before traffic. DHCP and the additional adapter
 families still need physical Wii validation in this build.
 
@@ -145,10 +157,10 @@ See [README.md](https://github.com/FIX94/Nintendont/blob/master/README.md) for s
 ### Build Requirements
 You will need to install part of the devkitPro toolchain to build Nintendont. Visit [the getting started page](https://devkitpro.org/wiki/Getting_Started) and find the instructions for your system. I recommend installing GBA, Wii, and GC packages. GBA is required to get `devkitARM` which isn't provided in the others. You effectively need `devkitARM` `devkitPPC` and `libogc`.
 
-### ASIX build dependencies
+### USB Ethernet build dependencies
 
-ASIX support uses this repository's driver in kernel/asix and **lwIP 2.2.1**,
-whose source is already included under kernel/asix/lwip. No external ASIX SDK,
+ASIX and Realtek support use this repository's driver in kernel/asix and **lwIP 2.2.1**,
+whose source is already included under kernel/asix/lwip. No external adapter SDK,
 prebuilt ASIX library, or separate lwIP installation is required. The kernel
 Makefile compiles and links these sources into the ARM kernel, which the loader
 embeds in boot.dol. The new sources compile as GNU C11, while the existing kernel
@@ -166,12 +178,21 @@ and the [official ASIX driver](https://github.com/ASIXElectronics/asix-usb-nic-l
 at 42feb1252fe0669845a8d6714bcc77bfc19eea1d. Two additional OEM identities come from
 [ASIX legacy driver](https://github.com/ASIXElectronics/ax88772c-772b-772a-linux-driver)
 at e87b8576e6fa3accd373cff326850ab0a216df36. Attribution is retained in the source.
-No Linux module, firmware download, or EEPROM programming is used on the Wii.
+Realtek initialization and its RAM patch are adapted from Realtek Semiconductor
+Corp.'s GPL-2.0 driver in [U-Boot v2025.10](https://github.com/u-boot/u-boot/tree/v2025.10/drivers/usb/eth)
+(r8152.c, r8152.h, r8152_fw.c), cross-checked with
+[Linux v6.18 r8152.c](https://github.com/torvalds/linux/blob/v6.18/drivers/net/usb/r8152.c).
+The port/patch retain GPL-2.0-only attribution. Source remains in kernel/asix and
+the slippi_asix filenames remain compatible with existing installations.
+No Linux module, separate firmware download, or EEPROM programming is used on the Wii.
 
 The host tests exercise the production driver initialization against simulated
 IOS for every implemented family, endpoint selection, MII ownership/link failures,
 USB 3.0 exclusion, all legacy header/payload split positions, malformed aggregates,
-and TX padding at USB packet boundaries. Full DHCP startup tests cover no-file
+and TX framing at USB packet boundaries. Realtek tests cover both silicon
+revisions, every vendor error/short transfer, reset/link timeouts, CRC/FCS,
+malformed groups and every frame length from 14 through 1514 bytes with both
+64- and 512-byte bulk endpoints. Full DHCP startup tests cover no-file
 auto configuration, dropped discovers/retries, wrong transaction IDs, NAK and
 address-conflict recovery, IP/router/DNS, renewal, rebinding, expiry and timeout.
 The socket tests use real lwIP with

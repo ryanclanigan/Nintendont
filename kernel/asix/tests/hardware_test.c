@@ -17,6 +17,7 @@ static int chip_pid=0x1790,legacy_chipcode,phy_mode,eeprom_board=0xffff;
 static int host_enable=1,link_ready=1,control_failure,alternate,bad_endpoints;
 static int mii_owned,writes_by_request[256],input_frames;static u8 frame_copy[1514];
 static char saved_log[4096];
+#include "rtl_model.h"
 u32 test_read32(u32 a){(void)a;return host_ms*1899;}
 u32 sys_now(void){return host_ms;}
 u32 asix_random(void){return 1234;}
@@ -37,20 +38,25 @@ void USBStorage_SeedDeviceList(const usb_device_entry *d,u32 count){assert(count
 s32 USB_ClearHalt(s32 fd,u8 ep){assert(fd==(s32)0xdf1f0021);(void)ep;return 0;}
 s32 IOS_Ioctl(s32 fd,s32 req,void *in,s32 ilen,void *out,s32 olen){
     assert(fd==1);
-    if(req==USBV5_IOCTL_GETDEVICECHANGE){enumeration_calls++;assert(olen==384);usb_device_entry *d=out;memset(d,0,olen);d->device_id=(s32)0xdf1f0021;d->vid=0x0b95;d->pid=chip_pid;return enumerated_devices;}
+    if(req==USBV5_IOCTL_GETDEVICECHANGE){enumeration_calls++;assert(olen==384);usb_device_entry *d=out;memset(d,0,olen);d->device_id=(s32)0xdf1f0021;d->vid=chip_vendor;d->pid=chip_pid;return enumerated_devices;}
     if(req==USBV5_IOCTL_ATTACHFINISH)return 0;
     if(req==USBV5_IOCTL_SUSPEND_RESUME){assert(ilen==32 && ((s32*)in)[0]==(s32)0xdf1f0021 && ((u32*)in)[2]==1);return resume_status;}
     assert(!"unexpected IOS ioctl");return -1;
 }
 s32 IOS_IoctlvAsync(s32 fd,s32 req,s32 in,s32 out,void *vec,int q,void *m){(void)fd;(void)req;(void)in;(void)out;(void)vec;(void)q;(void)m;return 0;}
 s32 USB_ReadCtrlMsg(s32 fd,u8 type,u8 req,u16 value,u16 index,u16 length,void *data){
-    assert(fd==(s32)0xdf1f0021);u8 *b=data;memset(b,0,length);
+    assert(fd==(s32)0xdf1f0021);
+    if(type==0xc0 && req==5 && chip_vendor==0x0bda)return rtl_transfer(type,value,index,length,data);
+    u8 *b=data;memset(b,0,length);
     if(type==0x80 && req==6 && value==0x100){
         if(descriptor_error)return -6;
-        assert(length==18);b[0]=18;b[1]=1;b[8]=0x95;b[9]=0x0b;b[10]=chip_pid;b[11]=chip_pid>>8;b[12]=chip_revision;b[13]=chip_revision>>8;
-    } else if(type==0x80 && req==6 && value==0x200){
+        assert(length==18);b[0]=18;b[1]=1;b[8]=chip_vendor;b[9]=chip_vendor>>8;b[10]=chip_pid;b[11]=chip_pid>>8;b[12]=chip_revision;b[13]=chip_revision>>8;b[17]=rtl_multi?2:1;
+    } else if(type==0x80 && req==6 && (value==0x200 || value==0x201)){
         u8 config[32]={9,2,32,0,1,1,0,0x80,50,9,4,0,0,2,0xff,0,0,0,7,5,0x82,2,0,2,0,7,5,3,2,0,2,0};
         assert(length==9 || length==32);
+        if(chip_vendor==0x0bda){config[5]=(value&255)+1;if(rtl_cdc_only || (rtl_multi && value==0x200))config[14]=2;
+            if(rtl_full_speed){config[22]=config[29]=64;config[23]=config[30]=0;}
+        }
         config[12]=alternate;config[20]=0x84;config[27]=bad_endpoints?0x85:5;
         memcpy(b,config,length);
     } else if(type==0x80 && req==8){assert(length==1);b[0]=current_config;}
@@ -73,6 +79,7 @@ s32 USB_ReadCtrlMsg(s32 fd,u8 type,u8 req,u16 value,u16 index,u16 length,void *d
 }
 s32 USB_WriteCtrlMsg(s32 fd,u8 type,u8 req,u16 value,u16 index,u16 n,void *data){
     assert(fd==(s32)0xdf1f0021);(void)index;(void)data;
+    if(type==0x40 && req==5 && chip_vendor==0x0bda)return rtl_transfer(type,value,index,n,data);
     if(type==0 && req==9){assert(n==0);set_config_count++;current_config=value;}
     else if(type==1 && req==11){assert(value==alternate && index==0);}
     else {
@@ -174,6 +181,7 @@ static void family_tests(struct netif *n) {
     probed=0;link_ready=0;assert(asix_hw_init(n)==-9);link_ready=1;
     probed=0;control_failure=1;assert(asix_hw_probe()<0);control_failure=0;
 }
+#include "rtl_tests.h"
 int main(void){
     struct netif n;memset(&n,0,sizeof(n));
     enumerated_devices=0;assert(asix_hw_probe()==0 && !device_present && seed_calls==1);
@@ -190,7 +198,7 @@ int main(void){
     assert(asix_hw_init(&n)==0 && set_config_count==1 && current_config==1);
     asix_hw_boot_log(&n);
     asix_lwip_heap=calloc(1,MEM_SIZE+4096);assert(asix_lwip_heap);lwip_init();
-    family_tests(&n);packet_tests(&n);
+    family_tests(&n);packet_tests(&n);rtl_tests(&n);
     probed=0;assert(asix_hw_init(&n)==0);
     memset(rx_data,0x5a,80);capture_rx(80);capture_rx(16);
     assert(rx_trace_n==104 && rx_trace_groups==2 && le32(rx_trace)==80 && le32(rx_trace+84)==16);
