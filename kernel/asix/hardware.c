@@ -45,6 +45,7 @@ static struct ipcmessage rx_msg ALIGNED(32), tx_msg ALIGNED(32);
 static u16 le16(const u8 *p) { return p[0] | ((u16)p[1]<<8); }
 static u32 le32(const u8 *p) { return p[0] | ((u32)p[1]<<8) | ((u32)p[2]<<16) | ((u32)p[3]<<24); }
 static int read_control(s32 fd,u8 type,u8 req,u16 val,u16 idx,u16 n,const char *label) {
+    ASIXBootProgress(0x10000000u|((u32)req<<16)|val);
     s32 rc=USB_ReadCtrlMsg(fd,type,req,val,idx,n,control_data);
     control_count++;last_control_result=rc;last_control_type=type;last_control_request=req;last_control_value=val;
     if(rc!=n+8) { report("ASIX %s: %d\n",label,rc); return -1; }
@@ -52,6 +53,7 @@ static int read_control(s32 fd,u8 type,u8 req,u16 val,u16 idx,u16 n,const char *
 }
 static int write_control(s32 fd,u8 req,u16 val,u16 idx,const u8 *data,u16 n,const char *label) {
     if(n) memcpy(control_data,data,n);
+    ASIXBootProgress(0x20000000u|((u32)req<<16)|val);
     s32 rc=USB_WriteCtrlMsg(fd,0x40,req,val,idx,n,n?control_data:NULL);
     control_count++;last_control_result=rc;last_control_type=0x40;last_control_request=req;last_control_value=val;
     if(rc!=n+8) { report("ASIX %s: %d\n",label,rc); return -1; }
@@ -340,19 +342,23 @@ int asix_hw_failed(void) { return failed; }
 static s32 probe_adapter(void) {
     static u32 args[8] ALIGNED(32);
     int io_failed=0;
+    ASIXBootProgress(1);
     ven=USB_Initialize();if(ven<0)return -1;
+    ASIXBootProgress(2);
     attached_count=IOS_Ioctl(ven,USBV5_IOCTL_GETDEVICECHANGE,NULL,0,attached,sizeof(attached));
     if(attached_count<0 || attached_count>32)return -2;
     USBStorage_SeedDeviceList(attached,attached_count);
+    ASIXBootProgress(3);
     attach_result=IOS_Ioctl(ven,USBV5_IOCTL_ATTACHFINISH,NULL,0,NULL,0);
     for(s32 i=0;i<attached_count;i++) {
         if(!asix_find_device(&attached[i],1,&device))continue;
         memset(args,0,sizeof(args));args[0]=device;args[2]=1;
         /* As in libogc, descriptor communication decides usability after resume. */
+        ASIXBootProgress(4);
         resume_result=IOS_Ioctl(ven,USBV5_IOCTL_SUSPEND_RESUME,args,sizeof(args),NULL,0);
         if(read_control(device,0x80,6,0x100,0,18,"device descriptor")){io_failed=1;continue;}
         if(control_data[0]!=18 || control_data[1]!=1 ||
-           le16(control_data+8)!=attached[i].vid || le16(control_data+10)!=attached[i].pid)continue;
+           le16(control_data+8)!=attached[i].vid || le16(control_data+10)!=attached[i].pid){io_failed=1;continue;}
         identity=asix_identity(attached[i].vid,attached[i].pid);
         revision=le16(control_data+12);configuration_count=control_data[17];
         if(identity->family==AX_772DE && revision!=0x0300)continue;
@@ -408,12 +414,16 @@ s32 asix_hw_init(struct netif *n) {
     if(!bulk_in || !bulk_out)return -6;
     if(read_control(device,0x80,8,0,0,1,"current configuration"))return -7;
     if(control_data[0]!=config) {
+        ASIXBootProgress(0x20090000u|config);
         last_control_result=USB_WriteCtrlMsg(device,0,9,config,0,0,NULL);
         control_count++;last_control_type=0;last_control_request=9;last_control_value=config;
         if(last_control_result!=8)return -7;
         if(read_control(device,0x80,8,0,0,1,"verify configuration") || control_data[0]!=config)return -7;
     }
-    if(chosen_alt && USB_WriteCtrlMsg(device,1,11,chosen_alt,chosen_interface,0,NULL)!=8)return -7;
+    if(chosen_alt) {
+        ASIXBootProgress(0x200b0000u|chosen_alt);
+        if(USB_WriteCtrlMsg(device,1,11,chosen_alt,chosen_interface,0,NULL)!=8)return -7;
+    }
     if(family==RTL_8152) {
         if(rtl_identify(device))return -12;
         if(read_control(device,0xc0,5,0xc000,RTL_PLA,8,"RTL MAC"))return -8;
@@ -466,7 +476,7 @@ static void boot_file(const char *name,const void *data,unsigned length) {
 void asix_hw_boot_log(struct netif *n) {
     static char text[4096];
     int length=_sprintf(text,
-        "Slippi Nintendont USB Ethernet test 5 preflight\r\n"
+        "Slippi Nintendont USB Ethernet test 6 preflight\r\n"
         "ip=%08x mask=%08x gateway=%08x\r\n"
         "MAC=%02x:%02x:%02x:%02x:%02x:%02x\r\n"
         "device=%08x ven=%d queue=%d failed=%d\r\n"

@@ -213,6 +213,41 @@ TinyCC users should also pass -CompilerInclude pointing to TinyCC's include
 directory. Host tests do not replace testing USB communication and mirroring
 on a physical Wii.
 
+### USB Ethernet startup fixes (test 6)
+
+This build includes the SlippWii startup fixes: recognized adapters with failed
+or malformed device descriptors return error -5 instead of silently entering
+native IOS networking. Absent or unsupported adapters retain the native path.
+The syscall_0c assembly stub now has the correct ARM function metadata, allowing
+safe calls from Thumb code. Nintendont currently builds this driver as ARM;
+SlippWii exposed the incorrect interworking when its driver moved to Thumb.
+
+The loading screen shows the last attempted startup phase and a hexadecimal
+checkpoint. 00000001..04 cover USB open/enumeration/attach/resume; 00000005
+covers configuration and queue/heap setup; 00000006 is lwIP initialization;
+00000007 adapter setup; 00000008 DHCP; 00000009 gateway preflight;
+0000000a startup logs; 0000000c/0d mirroring/discovery threads. 00000020..24
+identify native IOS startup calls. 10rrvvvv/20rrvvvv identify a USB control
+read/write with request rr and value/register vvvv. A photo of a persistent
+checkpoint helps locate a blocked startup operation. Synchronous IOS calls
+still do not have a new timeout in this build.
+
+The app-only ZIP contains apps/Slippi Nintendont/boot.dol, meta.xml and icon.png.
+Extract at the SD root, merging folders and replacing those app files. It
+preserves existing root slippi_asix.ini settings. Without an INI, DHCP is used;
+for a router, use no INI or a file containing only dhcp=1. The adapter drivers
+and lwIP are embedded in boot.dol; no additional driver files are installed.
+
+After building, validate ARM syscall metadata using the linked kernel:
+
+~~~sh
+python scripts/check_kernel_syscalls.py
+~~~
+
+The checker uses DEVKITARM or a readelf on PATH; --readelf can select a tool
+explicitly. Run the host USB tests above too. These checks do not replace a
+physical Wii boot and mirroring test.
+
 ### Building with Docker
 We maintain a docker image for building on CI which can also be used for building locally without the need to install devkitPro. Simply run `docker run --volume=${PWD}:/work --workdir=/work nikhilnarayana/devkitpro-slippi:7 make` from the root repo directory.
 

@@ -148,7 +148,11 @@ static int load_config(ip4_addr_t *ip,ip4_addr_t *mask,ip4_addr_t *gw) {
     return 0;
 }
 s32 ASIXTryInit(void) {
-    if(asix_hw_probe()!=1)return 0;
+    s32 probe=asix_hw_probe();
+    /* A recognized adapter that failed descriptor I/O must not enter the
+     * native IOS stack as though no USB Ethernet device were present. */
+    if(probe==-5)return probe;
+    if(probe!=1)return 0;
     s32 result=ASIXInit();
     return result<0?result:1;
 }
@@ -164,6 +168,7 @@ static s32 acquire_dhcp(void) {
 }
 s32 ASIXInit(void) {
     ip4_addr_t ip,mask,gw;
+    ASIXBootProgress(5);
     int config=load_config(&ip,&mask,&gw);
     if(config) {dbgprintf("ASIX: missing or invalid /slippi_asix.ini\n");return -101;}
     mutex=mqueue_create(mutex_store,1);if(mutex<0)return -102;
@@ -172,6 +177,7 @@ s32 ASIXInit(void) {
     if(!asix_lwip_heap)return -104;
     received=heap_alloc_aligned(0,RX_SIZE,32);
     if(!received)return -104;
+    ASIXBootProgress(6);
     lwip_init();
     ip_addr_t resolver;ip_addr_set_zero(&resolver);
     if(!use_dhcp)ip_addr_copy_from_ip4(resolver,dns_server);
@@ -179,11 +185,13 @@ s32 ASIXInit(void) {
     ip4_addr_t zero;ip4_addr_set_zero(&zero);
     if(!netif_add(&nic,use_dhcp?&zero:&ip,use_dhcp?&zero:&mask,use_dhcp?&zero:&gw,
                   NULL,netif_setup,ethernet_input))return -103;
+    ASIXBootProgress(7);
     s32 result=asix_hw_init(&nic);
     if(result<0){asix_hw_boot_log(&nic);return result;}
     netif_set_default(&nic);netif_set_up(&nic);netif_set_link_up(&nic);
     memcpy(wifi_mac_address,nic.hwaddr,6);
     if(use_dhcp) {
+        ASIXBootProgress(8);
         result=dhcp_result=acquire_dhcp();
         if(result<0) {
             if(!static_fallback || asix_hw_failed()){asix_hw_boot_log(&nic);return result;}
@@ -198,8 +206,10 @@ s32 ASIXInit(void) {
     /* Exercise the actual Starlet data path before game/disc threads start.
      * Diagnostics are written here so FatFS is not called from socket threads. */
     if(!ip4_addr_isany_val(*netif_ip4_gw(&nic)))etharp_request(&nic,netif_ip4_gw(&nic));
+    ASIXBootProgress(9);
     u32 preflight=sys_now();
     while((u32)(sys_now()-preflight)<3000) {pump();mdelay(1);}
+    ASIXBootProgress(10);
     asix_hw_boot_log(&nic);
     top_fd=0;NetworkStarted=1;active=1;
     dbgprintf("ASIX: IP %08x, Slippi TCP 51441\n",current_ip_address);

@@ -11,7 +11,7 @@ void *asix_lwip_heap;
 const char *ASIXAddressMode(void){return "test";}
 s32 ASIXDhcpResult(void){return 0;}
 u32 host_ms;
-static int resume_status=-6,descriptor_error,current_config=1,set_config_count;
+static int resume_status=-6,descriptor_error,descriptor_malformed,current_config=1,set_config_count;
 static int enumerated_devices=1,chip_revision=0x0300,enumeration_calls,seed_calls;
 static int chip_pid=0x1790,legacy_chipcode,phy_mode,eeprom_board=0xffff;
 static int host_enable=1,link_ready=1,control_failure,alternate,bad_endpoints;
@@ -50,7 +50,7 @@ s32 USB_ReadCtrlMsg(s32 fd,u8 type,u8 req,u16 value,u16 index,u16 length,void *d
     u8 *b=data;memset(b,0,length);
     if(type==0x80 && req==6 && value==0x100){
         if(descriptor_error)return -6;
-        assert(length==18);b[0]=18;b[1]=1;b[8]=chip_vendor;b[9]=chip_vendor>>8;b[10]=chip_pid;b[11]=chip_pid>>8;b[12]=chip_revision;b[13]=chip_revision>>8;b[17]=rtl_multi?2:1;
+        assert(length==18);b[0]=descriptor_malformed?0:18;b[1]=1;b[8]=chip_vendor;b[9]=chip_vendor>>8;b[10]=chip_pid;b[11]=chip_pid>>8;b[12]=chip_revision;b[13]=chip_revision>>8;b[17]=rtl_multi?2:1;
     } else if(type==0x80 && req==6 && (value==0x200 || value==0x201)){
         u8 config[32]={9,2,32,0,1,1,0,0x80,50,9,4,0,0,2,0xff,0,0,0,7,5,0x82,2,0,2,0,7,5,3,2,0,2,0};
         assert(length==9 || length==32);
@@ -194,7 +194,9 @@ int main(void){
     asix_hw_boot_log(&n);assert(strstr(saved_log,"resume_result=-6") && strstr(saved_log,"matched=1"));
     probed=0;descriptor_error=1;assert(asix_hw_init(&n)==-5);
     asix_hw_boot_log(&n);assert(strstr(saved_log,"last_control_result=-6") && strstr(saved_log,"request=06"));
-    probed=0;descriptor_error=0;resume_status=0;current_config=0;
+    probed=0;descriptor_error=0;descriptor_malformed=1;
+    assert(asix_hw_probe()==-5 && !device_present);
+    probed=0;descriptor_malformed=0;resume_status=0;current_config=0;
     assert(asix_hw_init(&n)==0 && set_config_count==1 && current_config==1);
     asix_hw_boot_log(&n);
     asix_lwip_heap=calloc(1,MEM_SIZE+4096);assert(asix_lwip_heap);lwip_init();

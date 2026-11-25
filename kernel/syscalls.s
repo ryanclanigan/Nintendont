@@ -56,7 +56,7 @@ syscall_0b:
 	bx lr
 
 	.global syscall_0c
-	.type   sycalll_0c STT_FUNC
+	.type   syscall_0c STT_FUNC
 syscall_0c:
 	.long 0xe6000190
 	bx lr

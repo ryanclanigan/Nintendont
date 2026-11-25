@@ -324,10 +324,12 @@ int _main( int argc, char *argv[] )
 			Shutdown();
 		}
 		NetworkStarted = 1;
+		ASIXBootProgress(12);
 		SlippiNetworkInit();
 #ifdef SLIPPI_DEBUG
 		SlippiDebugInit();
 #endif
+		ASIXBootProgress(13);
 		SlippiNetworkBroadcastInit();
 	}
 

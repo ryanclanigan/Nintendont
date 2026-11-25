@@ -33,6 +33,12 @@ static const char top_name[15] ALIGNED(32) = "/dev/net/ip/top";
  * attempt to deal with sockets. It should ultimately prepare top_fd for use
  * in dedicated Slippi networking thread/s.
  */
+void ASIXBootProgress(u32 step)
+{
+    STATUS_ERROR = step;
+    sync_after_write(STATUS, 0x20);
+}
+
 int NCDInit(void)
 {
 	s32 res=ASIXTryInit();
@@ -53,10 +59,12 @@ int NCDInit(void)
 	 *	if (some_s32 == -15) already_started;
 	 */
 
+	ASIXBootProgress(0x20);
 	s32 kd_fd = IOS_Open(kd_name, 0);
 	void *nwc_buf = heap_alloc_aligned(0, 32, 32);
 	dbgprintf("kd_fd: %i\n", kd_fd);
 
+	ASIXBootProgress(0x21);
 	res = IOS_Ioctl(kd_fd, IOCTL_NWC24_STARTUP, 0, 0, nwc_buf, 32);
 	dbgprintf("IOCTL_NWC24_STARTUP: %d\n", res);
 	IOS_Close(kd_fd);
@@ -67,12 +75,15 @@ int NCDInit(void)
 	 * Slippi threads], then initialize the IOS socket driver.
 	 */
 
+	ASIXBootProgress(0x22);
 	top_fd = IOS_Open(top_name, 0);
 	dbgprintf("top_fd: %i\n", top_fd);
 
+	ASIXBootProgress(0x23);
 	res = IOS_Ioctl(top_fd, IOCTL_SO_STARTUP, 0, 0, 0, 0);
 	dbgprintf("IOCTL_SO_STARTUP: %d\n", res);
 
+	ASIXBootProgress(0x24);
 	current_ip_address = IOS_Ioctl(top_fd, IOCTL_SO_GETHOSTID, 0, 0, 0, 0);
 	dbgprintf("IOCTL_SO_GETHOSTID: 0x%x\n", current_ip_address);
 

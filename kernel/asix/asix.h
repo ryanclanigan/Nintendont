@@ -6,6 +6,12 @@
 s32 ASIXInit(void);
 /* 1 = selected, 0 = use native IOS, negative = selected driver failed. */
 s32 ASIXTryInit(void);
+/* Startup-only screen checkpoints; no filesystem I/O or runtime polling. */
+#ifdef ASIX_HOST_TEST
+static inline void ASIXBootProgress(u32 step) {(void)step;}
+#else
+void ASIXBootProgress(u32 step);
+#endif
 int ASIXIsActive(void);
 const char *ASIXAddressMode(void);
 s32 ASIXDhcpResult(void);

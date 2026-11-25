@@ -1124,8 +1124,27 @@ int main(int argc, char **argv)
 			if(STATUS_LOADING == -5)
 				PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*10, "Checking FS... Error! %d Shutting down", STATUS_ERROR);
 
-			if(STATUS_LOADING == NETWORK_INIT)
-				PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X, MENU_POS_Y + 20*12, "Slippi network init...");
+			if(STATUS_LOADING == NETWORK_INIT) {
+                u32 step = STATUS_ERROR;
+                const char *phase = "Starting";
+                if(step == 1) phase = "Opening USB";
+                else if(step == 2) phase = "Listing USB devices";
+                else if(step == 3) phase = "Finishing USB attach";
+                else if(step == 4) phase = "Resuming adapter";
+                else if(step == 5) phase = "Reading IP config";
+                else if(step == 6) phase = "Starting IP stack";
+                else if(step == 7) phase = "Initializing adapter";
+                else if(step == 8) phase = "Waiting for DHCP (30s)";
+                else if(step == 9) phase = "Checking gateway (3s)";
+                else if(step == 10) phase = "Saving diagnostic log";
+                else if(step == 12) phase = "Starting mirroring thread";
+                else if(step == 13) phase = "Starting discovery thread";
+                else if(step >= 0x20 && step <= 0x24) phase = "Native IOS networking";
+                else if((step >> 28) == 1) phase = "Reading USB register";
+                else if((step >> 28) == 2) phase = "Writing USB register";
+                PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X, MENU_POS_Y + 20*12,
+                            "Network: %s [%08x]", phase, step);
+            }
 			if(abs(STATUS_LOADING) > NETWORK_INIT && abs(STATUS_LOADING) < 20)
 				PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X, MENU_POS_Y + 20*12, "Slippi network init... Done!");
 			if(STATUS_LOADING == -6) {

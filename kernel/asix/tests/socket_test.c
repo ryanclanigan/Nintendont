@@ -172,7 +172,9 @@ int main(int argc,char **argv){
     config_text="ip=192.168.137.250\nnetmask=255.255.255.0\ngateway=192.168.137.1\ndns=1.1.1.1\n";assert(load_config(&ip,&mask,&gw)==0 && ip4_addr_get_u32(&dns_server)==lwip_htonl(0x01010101));
     config_text="invalid";config_reads=0;detected=0;
     assert(ASIXTryInit()==0 && !ASIXIsActive() && config_reads==0);
-    detected=-5;assert(ASIXTryInit()==0 && !ASIXIsActive() && config_reads==0);
+    detected=-1;assert(ASIXTryInit()==0 && !ASIXIsActive() && config_reads==0);
+    detected=-2;assert(ASIXTryInit()==0 && !ASIXIsActive() && config_reads==0);
+    detected=-5;assert(ASIXTryInit()==-5 && !ASIXIsActive() && config_reads==0);
     detected=1;assert(ASIXTryInit()==-101 && !ASIXIsActive());
     missing_config=1;assert(load_config(&ip,&mask,&gw)==0 && use_dhcp);
     missing_config=0;config_text="dhcp=1\n";assert(load_config(&ip,&mask,&gw)==0 && use_dhcp);
